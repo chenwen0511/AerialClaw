@@ -1792,6 +1792,13 @@ def _world_state_broadcaster():
 # ── 启动 ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # v2.0: 统一日志 + 启动自检
+    from core.logger import setup_logging
+    from core.preflight import run_preflight
+
+    setup_logging(log_dir="logs", level="INFO")
+    preflight_report = run_preflight()
+
     # 启动世界状态定时推送
     t = threading.Thread(target=_world_state_broadcaster, daemon=True)
     t.start()
