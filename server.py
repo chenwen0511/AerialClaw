@@ -1815,6 +1815,248 @@ def on_run_doctor():
         emit("doctor_report", {"error": str(e)})
 
 
+# ── 通用设备协议 API (Phase 4) ────────────────────────────────────────────────
+
+# 全局设备管理器（延迟初始化）
+_device_manager = None
+
+
+def _get_device_manager():
+    """获取或创建设备管理器单例"""
+    global _device_manager
+    if _device_manager is None:
+        from core.device_manager import DeviceManager
+        _device_manager = DeviceManager()
+
+        # 设备离线回调
+        def on_offline(device_id):
+            state.push_log("warning", f"⚠️ 设备离线: {device_id}")
+            socketio.emit("device_offline", {"device_id": device_id})
+
+        def on_online(device_id):
+            state.push_log("info", f"✅ 设备上线: {device_id}")
+            socketio.emit("device_online", {"device_id": device_id})
+
+        _device_manager.on_device_offline(on_offline)
+        _device_manager.on_device_online(on_online)
+        _device_manager.start()
+    return _device_manager
+
+
+@app.route("/api/device/register", methods=["POST"])
+def api_device_register():
+    """设备注册"""
+    from core.device_manager import DeviceInfo
+    dm = _get_device_manager()
+    data = request.get_json() or {}
+
+    required = ["device_id", "device_type", "capabilities", "sensors", "protocol"]
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"ok": False, "error": f"缺少必填字段: {missing}", "code": "MISSING_FIELDS"}), 400
+
+    try:
+        info = DeviceInfo(
+            device_id=data["device_id"],
+            device_type=data["device_type"],
+            capabilities=data["capabilities"],
+            sensors=data["sensors"],
+            protocol=data["protocol"],
+            metadata=data.get("metadata", {}),
+        )
+        token = dm.register(info)
+        state.push_log("success", f"✅ 设备注册: {info.device_id} ({info.device_type})")
+        socketio.emit("device_registered", {"device_id": info.device_id, "device_type": info.device_type})
+        return jsonify({"ok": True, "device_id": info.device_id, "token": token, "message": "设备注册成功"}), 201
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e), "code": "DEVICE_ALREADY_EXISTS"}), 409
+
+
+@app.route("/api/device/<device_id>", methods=["DELETE"])
+def api_device_unregister(device_id):
+    """设备注销"""
+    dm = _get_device_manager()
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not dm.validate_token(device_id, token):
+        return jsonify({"ok": False, "error": "Token 无效", "code": "INVALID_TOKEN"}), 401
+    try:
+        dm.unregister(device_id)
+        state.push_log("info", f"设备注销: {device_id}")
+        socketio.emit("device_unregistered", {"device_id": device_id})
+        return jsonify({"ok": True, "device_id": device_id, "message": "设备已注销"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "code": "DEVICE_NOT_FOUND"}), 404
+
+
+@app.route("/api/device/<device_id>/state", methods=["POST"])
+def api_device_state(device_id):
+    """设备状态上报"""
+    dm = _get_device_manager()
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not dm.validate_token(device_id, token):
+        return jsonify({"ok": False, "error": "Token 无效", "code": "INVALID_TOKEN"}), 401
+    try:
+        data = request.get_json() or {}
+        dm.update_state(device_id, data)
+        return jsonify({"ok": True, "device_id": device_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+
+
+@app.route("/api/device/<device_id>/sensor", methods=["POST"])
+def api_device_sensor(device_id):
+    """传感器数据上报"""
+    dm = _get_device_manager()
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not dm.validate_token(device_id, token):
+        return jsonify({"ok": False, "error": "Token 无效", "code": "INVALID_TOKEN"}), 401
+    try:
+        data = request.get_json() or {}
+        dm.update_sensor(device_id, data)
+        return jsonify({"ok": True, "device_id": device_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+
+
+@app.route("/api/devices", methods=["GET"])
+def api_device_list():
+    """设备列表"""
+    dm = _get_device_manager()
+    devices = dm.list_devices()
+    return jsonify({
+        "ok": True,
+        "devices": [dm.to_dict(d) for d in devices],
+        "count": len(devices),
+    })
+
+
+# ── 通用设备 WebSocket 事件 ──────────────────────────────────────────────────
+
+@socketio.on("device_connect")
+def on_device_connect(data):
+    """设备 WebSocket 认证"""
+    dm = _get_device_manager()
+    device_id = data.get("device_id", "")
+    token = data.get("token", "")
+    if not dm.validate_token(device_id, token):
+        emit("device_connected", {"ok": False, "error": "Token 无效"})
+        return
+    dm.set_ws_sid(device_id, request.sid)
+    # 注册指令下发回调
+    def send_action_to_device(payload):
+        socketio.emit("device_action", payload, to=request.sid)
+    dm.set_action_callback(device_id, send_action_to_device)
+    emit("device_connected", {"ok": True, "device_id": device_id, "message": "WebSocket 已认证"})
+    state.push_log("info", f"设备 WebSocket 认证: {device_id}")
+
+
+@socketio.on("device_state")
+def on_device_state_ws(data):
+    """WebSocket 设备状态上报"""
+    dm = _get_device_manager()
+    device_id = data.get("device_id", "")
+    try:
+        dm.update_state(device_id, data)
+    except Exception as e:
+        logger.warning("设备状态更新失败 [%s]: %s", device_id, e)
+
+
+@socketio.on("device_sensor")
+def on_device_sensor_ws(data):
+    """WebSocket 传感器数据上报"""
+    dm = _get_device_manager()
+    device_id = data.get("device_id", "")
+    try:
+        dm.update_sensor(device_id, data)
+    except Exception as e:
+        logger.warning("传感器数据更新失败 [%s]: %s", device_id, e)
+
+
+@socketio.on("heartbeat")
+def on_device_heartbeat(data):
+    """设备心跳"""
+    dm = _get_device_manager()
+    device_id = data.get("device_id", "")
+    try:
+        dm.heartbeat(device_id)
+        emit("heartbeat_ack", {"device_id": device_id, "timestamp": time.time()})
+    except Exception as e:
+        logger.warning("心跳处理失败 [%s]: %s", device_id, e)
+
+
+@socketio.on("action_result")
+def on_action_result(data):
+    """设备指令执行结果回报"""
+    from core.device_manager import ActionResult
+    dm = _get_device_manager()
+    action_id = data.get("action_id", "")
+    result = ActionResult(
+        action_id=action_id,
+        success=data.get("success", False),
+        message=data.get("message", ""),
+        output=data.get("output", {}),
+        cost_time=data.get("cost_time", 0),
+    )
+    dm.report_action_result(action_id, result)
+
+
+# ── Bootstrap API (Phase 4) ─────────────────────────────────────────────────
+
+@app.route("/api/bootstrap/status", methods=["GET"])
+def api_bootstrap_status():
+    """获取引导状态"""
+    from core.bootstrap import get_bootstrap_manager
+    bm = get_bootstrap_manager()
+    return jsonify({
+        "ok": True,
+        "needs_bootstrap": bm.needs_bootstrap(),
+        "state": bm.get_state(),
+    })
+
+
+@app.route("/api/bootstrap/llm", methods=["POST"])
+def api_bootstrap_llm():
+    """保存 LLM 配置"""
+    from core.bootstrap import get_bootstrap_manager
+    bm = get_bootstrap_manager()
+    data = request.get_json() or {}
+    provider = data.get("provider", "custom")
+    base_url = data.get("base_url", "")
+    api_key = data.get("api_key", "")
+    model = data.get("model", "")
+    if not base_url or not api_key or not model:
+        return jsonify({"ok": False, "error": "base_url, api_key, model 不能为空"}), 400
+    # 先测试连接
+    test = bm.test_llm_connection(base_url, api_key, model)
+    if not test["ok"]:
+        return jsonify({"ok": False, "error": test["message"]}), 502
+    # 保存配置
+    ok = bm.save_llm_config(provider, base_url, api_key, model)
+    return jsonify({"ok": ok, "test_result": test})
+
+
+@app.route("/api/bootstrap/safety", methods=["POST"])
+def api_bootstrap_safety():
+    """设置安全等级"""
+    from core.bootstrap import get_bootstrap_manager
+    bm = get_bootstrap_manager()
+    data = request.get_json() or {}
+    level = data.get("level", "standard")
+    if level not in ("strict", "standard", "permissive"):
+        return jsonify({"ok": False, "error": "level 必须是 strict/standard/permissive"}), 400
+    ok = bm.save_safety_level(level)
+    return jsonify({"ok": ok, "level": level})
+
+
+@app.route("/api/bootstrap/complete", methods=["POST"])
+def api_bootstrap_complete():
+    """完成引导"""
+    from core.bootstrap import get_bootstrap_manager
+    bm = get_bootstrap_manager()
+    bm.complete()
+    return jsonify({"ok": True, "message": "引导完成"})
+
+
 # ── 启动 ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
