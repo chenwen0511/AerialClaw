@@ -1820,6 +1820,113 @@ def on_run_doctor():
         emit("doctor_report", {"error": str(e)})
 
 
+# ── Safety API ────────────────────────────────────────────────────────────────
+
+@app.route("/api/safety/status", methods=["GET"])
+def api_safety_status():
+    """安全体系状态"""
+    try:
+        from core.safety.config import get_safety_config
+        from core.safety.flight_envelope import FlightEnvelope
+        cfg = get_safety_config()
+        fe = FlightEnvelope()
+        return jsonify({
+            "ok": True,
+            "level": cfg.level,
+            "gates": {
+                "command_filter": {"name": "Command Filter", "passed": 0, "blocked": 0},
+                "sandbox": {"name": "Sandbox", "passed": 0, "blocked": 0},
+                "approval": {"name": "Approval", "passed": 0, "blocked": 0},
+                "flight_envelope": {"name": "Flight Envelope", "passed": 0, "blocked": 0},
+            },
+            "envelope": {
+                "max_speed": fe.MAX_SPEED,
+                "max_altitude": fe.MAX_ALTITUDE,
+                "min_battery": fe.MIN_BATTERY,
+                "critical_battery": fe.CRITICAL_BATTERY,
+                "heartbeat_timeout": fe.HEARTBEAT_TIMEOUT,
+                "max_distance": fe.MAX_DISTANCE,
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/safety/audit", methods=["GET"])
+def api_safety_audit():
+    """审计日志"""
+    limit = int(request.args.get("limit", 10))
+    try:
+        from core.safety.audit_log import AuditLog
+        al = AuditLog()
+        logs = al.get_log(limit=limit)
+        return jsonify({"ok": True, "logs": [e.to_dict() for e in logs], "count": len(logs)})
+    except Exception as e:
+        return jsonify({"ok": True, "logs": [], "count": 0})
+
+
+# ── Memory API ────────────────────────────────────────────────────────────────
+
+@app.route("/api/memory/stats", methods=["GET"])
+def api_memory_stats():
+    """记忆系统统计"""
+    try:
+        from memory.memory_manager import MemoryManager
+        mm = MemoryManager()
+        return jsonify({
+            "ok": True,
+            "layers": {
+                "working": {"count": len(mm.working.get_recent(100)), "label": "Working"},
+                "episodic": {"count": mm.episodic.count(), "label": "Episodic"},
+                "skill": {"count": mm.skill.count(), "label": "Skill"},
+                "world": {"count": mm.world.count(), "label": "World"},
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": True, "layers": {
+            "working": {"count": 0, "label": "Working"},
+            "episodic": {"count": 0, "label": "Episodic"},
+            "skill": {"count": 0, "label": "Skill"},
+            "world": {"count": 0, "label": "World"},
+        }})
+
+
+@app.route("/api/memory/recent", methods=["GET"])
+def api_memory_recent():
+    """最近记忆"""
+    limit = int(request.args.get("limit", 20))
+    try:
+        from memory.memory_manager import MemoryManager
+        mm = MemoryManager()
+        items = mm.recall("", top_k=limit)
+        return jsonify({"ok": True, "items": [
+            {"text": i.text, "score": i.score, "layer": i.metadata.get("layer", "unknown"),
+             "metadata": i.metadata} for i in items
+        ]})
+    except Exception as e:
+        return jsonify({"ok": True, "items": []})
+
+
+@app.route("/api/memory/search", methods=["POST"])
+def api_memory_search():
+    """记忆语义搜索"""
+    data = request.get_json() or {}
+    query = data.get("query", "")
+    top_k = data.get("top_k", 10)
+    if not query:
+        return jsonify({"ok": False, "error": "query 不能为空"}), 400
+    try:
+        from memory.memory_manager import MemoryManager
+        mm = MemoryManager()
+        items = mm.recall(query, top_k=top_k)
+        return jsonify({"ok": True, "query": query, "items": [
+            {"text": i.text, "score": i.score, "layer": i.metadata.get("layer", "unknown"),
+             "metadata": i.metadata} for i in items
+        ]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── 通用设备协议 API (Phase 4) ────────────────────────────────────────────────
 
 # 全局设备管理器（延迟初始化）

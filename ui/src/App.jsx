@@ -1,17 +1,18 @@
 /**
- * App.jsx — AerialClaw 控制台主界面
+ * App.jsx — AerialClaw v2.0 控制台主界面
  *
  * 布局：
- *   ┌──────────────────────────────────────────────┐
- *   │  Header: Logo | 连接状态 | 初始化 | 模式切换   │
- *   ├──────────┬─────────────────┬─────────────────┤
- *   │          │                 │                 │
- *   │ 机器人   │  技能控制        │  AI / 执行报告  │
- *   │ 状态面板  │  (手动模式)      │  (AI 模式)      │
- *   │          │                 │                 │
- *   ├──────────┴─────────────────┴─────────────────┤
- *   │  实时执行日志 (所有模式可见)                    │
- *   └──────────────────────────────────────────────┘
+ *   ┌──────────────────────────────────────────────────────┐
+ *   │  Header: Logo | 连接 | 初始化 | 模式 | Tab 导航        │
+ *   ├──────────────────────────────────────────────────────┤
+ *   │  Tab 内容区                                           │
+ *   │   控制台 → RobotPanel + SkillPanel/AiMonitor + AiPanel │
+ *   │   设备   → DeviceSetupPanel                           │
+ *   │   技能   → SkillEvolutionPanel                        │
+ *   │   记忆   → MemoryPanel                                │
+ *   │   安全   → SafetyPanel                                │
+ *   │   健康   → DoctorPanel                                │
+ *   └──────────────────────────────────────────────────────┘
  */
 import { useState, useEffect } from 'react'
 import { useSocket } from './hooks/useSocket'
@@ -24,7 +25,59 @@ import SensorPanel from './components/SensorPanel'
 import AiMonitorPanel from './components/AiMonitorPanel'
 import ModelConfig from './components/ModelConfig'
 import CockpitView from './components/CockpitView'
+import DeviceSetupPanel from './components/DeviceSetupPanel'
+import SkillEvolutionPanel from './components/SkillEvolutionPanel'
+import BootstrapWizard from './components/BootstrapWizard'
+import DoctorPanel from './components/DoctorPanel'
+import SafetyPanel from './components/SafetyPanel'
+import MemoryPanel from './components/MemoryPanel'
 import './App.css'
+
+const TABS = [
+  { key: 'console',  label: '控制台',  icon: '🖥' },
+  { key: 'device',   label: '设备',    icon: '✈️' },
+  { key: 'skill',    label: '技能',    icon: '🧩' },
+  { key: 'memory',   label: '记忆',    icon: '🧠' },
+  { key: 'safety',   label: '安全',    icon: '🛡' },
+  { key: 'doctor',   label: '健康检查', icon: '🩺' },
+]
+
+function TabBar({ activeTab, onTabChange }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 2,
+      padding: '0 8px',
+      background: 'var(--bg-panel)',
+      borderBottom: '1px solid var(--border)',
+      flexShrink: 0,
+    }}>
+      {TABS.map(tab => {
+        const active = activeTab === tab.key
+        return (
+          <button
+            key={tab.key}
+            onClick={() => onTabChange(tab.key)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '8px 14px',
+              background: 'none',
+              border: 'none',
+              borderBottom: active ? '2px solid #00d4ff' : '2px solid transparent',
+              color: active ? '#00d4ff' : '#64748b',
+              fontSize: 12, fontWeight: active ? 700 : 400,
+              cursor: 'pointer',
+              transition: 'color .15s',
+              marginBottom: -1,
+            }}
+          >
+            <span style={{ fontSize: 13 }}>{tab.icon}</span>
+            {tab.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function App() {
   const {
@@ -41,9 +94,19 @@ export default function App() {
     sendChat,
   } = useSocket()
 
-  // AI 报告只在有新报告时显示，切换任务时清空
+  const [activeTab,       setActiveTab]       = useState('console')
   const [aiReportVisible, setAiReportVisible] = useState(false)
   const [showModelConfig, setShowModelConfig] = useState(false)
+  const [showBootstrap,   setShowBootstrap]   = useState(false)
+
+  // Bootstrap 检测
+  useEffect(() => {
+    fetch('/api/bootstrap/status')
+      .then(r => r.json())
+      .then(d => { if (d.needs_bootstrap) setShowBootstrap(true) })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (lastAiReport) setAiReportVisible(true)
   }, [lastAiReport])
@@ -58,13 +121,20 @@ export default function App() {
     submitAiTask(task, useTools)
   }
 
+  const socket = getSocket()
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+
+      {/* Bootstrap 向导（全屏遮罩） */}
+      {showBootstrap && (
+        <BootstrapWizard onComplete={() => setShowBootstrap(false)} />
+      )}
 
       {/* 驾驶舱全屏视图 */}
       {cockpitOpen && (
         <CockpitView
-          socket={getSocket()}
+          socket={socket}
           sensorCameras={sensorCameras}
           sensorLidar={sensorLidar}
           onClose={closeCockpit}
@@ -81,145 +151,167 @@ export default function App() {
         onStop={stopExecution}
       />
 
-      {/* 主内容区 */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+      {/* Tab 导航栏 */}
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
-        {/* 左侧：机器人状态 */}
-        <div style={{
-          width: 220,
-          flexShrink: 0,
-          borderRight: '1px solid var(--border)',
-          padding: 10,
-          overflow: 'hidden',
-          background: 'var(--bg-panel)',
-        }}>
-          <RobotPanel
-            worldState={worldState}
-            currentRobot={systemStatus.current_robot}
-            onSelectRobot={selectRobot}
-          />
-        </div>
+      {/* ── 控制台 Tab ────────────────────────────────────────────────────────── */}
+      {activeTab === 'console' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+          <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
 
-        {/* 中间：技能控制（手动模式）/ 占位（AI 模式） */}
-        <div style={{
-          flex: 1,
-          borderRight: '1px solid var(--border)',
-          padding: 10,
-          overflow: 'hidden',
-          background: 'var(--bg)',
-          position: 'relative',
-        }}>
-          {systemStatus.mode === 'manual' ? (
-            <SkillPanel
-              skillCatalog={skillCatalog}
-              currentRobot={systemStatus.current_robot}
-              worldState={worldState}
-              isExecuting={systemStatus.is_executing}
-              onExecuteSkill={executeSkill}
-              lastResult={lastSkillResult}
-            />
-          ) : (
-            <AiMonitorPanel
-              sensorCameras={sensorCameras}
-              sensorLidar={sensorLidar}
-              aiThinking={aiThinking}
-              aiStream={aiStream}
-              lastAiPlan={lastAiPlan}
-              logs={logs}
-              onOpenCockpit={openCockpit}
-            />
-          )}
-        </div>
-
-        {/* 右侧：传感器（手动模式） + AI 面板 */}
-        <div style={{
-          width: 320,
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          borderLeft: '1px solid var(--border)',
-        }}>
-          {/* 传感器面板 — 仅手动模式显示（AI 模式下传感器在中间面板） */}
-          {systemStatus.mode === 'manual' && (
+            {/* 左侧：机器人状态 */}
             <div style={{
-              height: 200,
-              flexShrink: 0,
-              padding: 10,
-              overflow: 'auto',
+              width: 220, flexShrink: 0,
+              borderRight: '1px solid var(--border)',
+              padding: 10, overflow: 'hidden',
               background: 'var(--bg-panel)',
-              borderBottom: '1px solid var(--border)',
             }}>
-              <SensorPanel
-                sensorCamera={sensorCamera}
-                sensorCameras={sensorCameras}
-                sensorLidar={sensorLidar}
-                onOpenCockpit={openCockpit}
+              <RobotPanel
+                worldState={worldState}
+                currentRobot={systemStatus.current_robot}
+                onSelectRobot={selectRobot}
               />
             </div>
-          )}
-          {/* 模型配置面板 (可折叠) */}
-          <div style={{
-            flexShrink: 0,
-            borderBottom: '1px solid var(--border)',
-          }}>
-            <div
-              onClick={() => setShowModelConfig(!showModelConfig)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 10px',
-                cursor: 'pointer',
-                background: 'var(--bg-panel)',
-                userSelect: 'none',
-              }}
-            >
-              <span style={{ fontSize: 12 }}>⚙️</span>
-              <span style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 600 }}>模型配置</span>
-              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
-                {showModelConfig ? '▾' : '▸'}
-              </span>
+
+            {/* 中间：技能控制 / AI 监控 */}
+            <div style={{
+              flex: 1, borderRight: '1px solid var(--border)',
+              padding: 10, overflow: 'hidden',
+              background: 'var(--bg)', position: 'relative',
+            }}>
+              {systemStatus.mode === 'manual' ? (
+                <SkillPanel
+                  skillCatalog={skillCatalog}
+                  currentRobot={systemStatus.current_robot}
+                  worldState={worldState}
+                  isExecuting={systemStatus.is_executing}
+                  onExecuteSkill={executeSkill}
+                  lastResult={lastSkillResult}
+                />
+              ) : (
+                <AiMonitorPanel
+                  sensorCameras={sensorCameras}
+                  sensorLidar={sensorLidar}
+                  aiThinking={aiThinking}
+                  aiStream={aiStream}
+                  lastAiPlan={lastAiPlan}
+                  logs={logs}
+                  onOpenCockpit={openCockpit}
+                />
+              )}
             </div>
-            {showModelConfig && (
+
+            {/* 右侧：传感器 + 模型配置 + AI 面板 */}
+            <div style={{
+              width: 320, flexShrink: 0,
+              display: 'flex', flexDirection: 'column',
+              overflow: 'hidden', borderLeft: '1px solid var(--border)',
+            }}>
+              {systemStatus.mode === 'manual' && (
+                <div style={{
+                  height: 200, flexShrink: 0,
+                  padding: 10, overflow: 'auto',
+                  background: 'var(--bg-panel)',
+                  borderBottom: '1px solid var(--border)',
+                }}>
+                  <SensorPanel
+                    sensorCamera={sensorCamera}
+                    sensorCameras={sensorCameras}
+                    sensorLidar={sensorLidar}
+                    onOpenCockpit={openCockpit}
+                  />
+                </div>
+              )}
+              {/* 模型配置（可折叠） */}
+              <div style={{ flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+                <div
+                  onClick={() => setShowModelConfig(!showModelConfig)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '6px 10px',
+                    cursor: 'pointer',
+                    background: 'var(--bg-panel)',
+                    userSelect: 'none',
+                  }}
+                >
+                  <span style={{ fontSize: 12 }}>⚙️</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 600 }}>模型配置</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
+                    {showModelConfig ? '▾' : '▸'}
+                  </span>
+                </div>
+                {showModelConfig && (
+                  <div style={{
+                    padding: '0 10px 10px',
+                    maxHeight: 360, overflowY: 'auto',
+                    background: 'var(--bg-panel)',
+                  }}>
+                    <ModelConfig />
+                  </div>
+                )}
+              </div>
+              {/* AI 面板 */}
               <div style={{
-                padding: '0 10px 10px',
-                maxHeight: 360,
-                overflowY: 'auto',
+                flex: 1, minHeight: 0,
+                padding: 10, overflow: 'hidden',
                 background: 'var(--bg-panel)',
               }}>
-                <ModelConfig />
+                <AiPanel
+                  mode={systemStatus.mode}
+                  isExecuting={systemStatus.is_executing}
+                  lastAiPlan={lastAiPlan}
+                  lastAiReport={aiReportVisible ? lastAiReport : null}
+                  onSubmitTask={handleSubmitAiTask}
+                  onStop={stopExecution}
+                  chatHistory={chatHistory}
+                  onSendChat={sendChat}
+                />
               </div>
-            )}
+            </div>
           </div>
-          {/* AI 面板 */}
-          <div style={{
-            flex: 1,
-            minHeight: 0,
-            padding: 10,
-            overflow: 'hidden',
-            background: 'var(--bg-panel)',
-          }}>
-            <AiPanel
-              mode={systemStatus.mode}
-              isExecuting={systemStatus.is_executing}
-              lastAiPlan={lastAiPlan}
-              lastAiReport={aiReportVisible ? lastAiReport : null}
-              onSubmitTask={handleSubmitAiTask}
-              onStop={stopExecution}
-              chatHistory={chatHistory}
-              onSendChat={sendChat}
-            />
+
+          {/* 底部：实时日志 */}
+          <div style={{ height: 180, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
+            <LogPanel logs={logs} />
           </div>
         </div>
-      </div>
+      )}
 
-      {/* 底部：实时日志 */}
-      <div style={{
-        height: 180,
-        flexShrink: 0,
-        borderTop: '1px solid var(--border)',
-      }}>
-        <LogPanel logs={logs} />
-      </div>
+      {/* ── 设备 Tab ──────────────────────────────────────────────────────────── */}
+      {activeTab === 'device' && (
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <DeviceSetupPanel socket={socket} connected={connected} />
+        </div>
+      )}
+
+      {/* ── 技能 Tab ──────────────────────────────────────────────────────────── */}
+      {activeTab === 'skill' && (
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <SkillEvolutionPanel socket={socket} connected={connected} />
+        </div>
+      )}
+
+      {/* ── 记忆 Tab ──────────────────────────────────────────────────────────── */}
+      {activeTab === 'memory' && (
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <MemoryPanel />
+        </div>
+      )}
+
+      {/* ── 安全 Tab ──────────────────────────────────────────────────────────── */}
+      {activeTab === 'safety' && (
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <SafetyPanel />
+        </div>
+      )}
+
+      {/* ── 健康检查 Tab ──────────────────────────────────────────────────────── */}
+      {activeTab === 'doctor' && (
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <DoctorPanel />
+        </div>
+      )}
+
     </div>
   )
 }
