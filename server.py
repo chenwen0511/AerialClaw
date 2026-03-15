@@ -2097,6 +2097,32 @@ def api_device_onboard(device_id):
         return jsonify({"ok": False, "error": "message 不能为空"}), 400
     ob = _get_onboarding()
     result = ob.chat(device_id, message)
+
+    # 建档完成后：更新设备能力 + 重新绑定技能
+    if result.get("profile_ready") and result.get("profile"):
+        profile = result["profile"]
+        dm = _get_device_manager()
+        device = dm.get_device(device_id)
+        if device:
+            # 更新设备信息
+            device.info.device_type = profile.get("type", device.info.device_type)
+            device.info.capabilities = profile.get("capabilities", device.info.capabilities)
+            device.info.sensors = profile.get("sensors", device.info.sensors)
+            device.info.metadata.update(profile.get("physical_limits", {}))
+            device.info.metadata["model"] = profile.get("model", "")
+            device.info.metadata["communication"] = profile.get("communication", "")
+            logger.info("设备 [%s] 档案更新: type=%s caps=%s", device_id,
+                        device.info.device_type, device.info.capabilities)
+            # 重新绑定技能
+            sb = _get_skill_binder()
+            sb.bind(device_id, device.info.capabilities, device.info.device_type)
+            # 通知前端
+            socketio.emit("device_updated", {
+                "device_id": device_id,
+                "device_type": device.info.device_type,
+                "capabilities": device.info.capabilities,
+            })
+
     return jsonify({"ok": True, **result})
 
 
