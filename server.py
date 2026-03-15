@@ -2049,6 +2049,40 @@ def api_device_list():
     })
 
 
+@app.route("/api/device/<device_id>/action", methods=["POST"])
+def api_device_send_action(device_id):
+    """向设备下发指令"""
+    dm = _get_device_manager()
+    device = dm.get_device(device_id)
+    if not device:
+        return jsonify({"ok": False, "error": f"设备 {device_id} 不存在"}), 404
+    if device.status != "online":
+        return jsonify({"ok": False, "error": f"设备 {device_id} 离线"}), 503
+    data = request.get_json() or {}
+    action_name = data.get("action", "")
+    params = data.get("params", {})
+    if not action_name:
+        return jsonify({"ok": False, "error": "action 不能为空"}), 400
+    try:
+        from core.device_manager import Action
+        result = dm.send_action(device_id, Action(action=action_name, params=params, timeout=15))
+        return jsonify({"ok": result.success, "message": result.message, "output": result.output,
+                        "cost_time": result.cost_time})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 504
+
+
+@app.route("/api/device/<device_id>/state", methods=["GET"])
+def api_device_get_state(device_id):
+    """获取设备状态（GET 版本）"""
+    dm = _get_device_manager()
+    try:
+        state = dm.get_device_state(device_id)
+        return jsonify({"ok": True, **state})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+
+
 # ── 通用设备 WebSocket 事件 ──────────────────────────────────────────────────
 
 @socketio.on("device_connect")
@@ -2071,22 +2105,27 @@ def on_device_connect(data):
 
 @socketio.on("device_state")
 def on_device_state_ws(data):
-    """WebSocket 设备状态上报"""
+    """WebSocket 设备状态上报 — 同时转发给控制台"""
     dm = _get_device_manager()
     device_id = data.get("device_id", "")
     try:
         dm.update_state(device_id, data)
+        # 转发给控制台前端（不发回给设备自己）
+        socketio.emit("device_state_update", {"device_id": device_id, "state": data},
+                      skip_sid=request.sid)
     except Exception as e:
         logger.warning("设备状态更新失败 [%s]: %s", device_id, e)
 
 
 @socketio.on("device_sensor")
 def on_device_sensor_ws(data):
-    """WebSocket 传感器数据上报"""
+    """WebSocket 传感器数据上报 — 同时转发给控制台"""
     dm = _get_device_manager()
     device_id = data.get("device_id", "")
     try:
         dm.update_sensor(device_id, data)
+        socketio.emit("device_sensor_update", {"device_id": device_id, "data": data},
+                      skip_sid=request.sid)
     except Exception as e:
         logger.warning("传感器数据更新失败 [%s]: %s", device_id, e)
 
