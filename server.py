@@ -2298,6 +2298,9 @@ def api_bootstrap_complete():
 # ── 启动 ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # 先加载配置（确保 .env 被解析）
+    import config as _cfg
+
     # v2.0: 统一日志 + 启动自检
     from core.logger import setup_logging
     from core.preflight import run_preflight
