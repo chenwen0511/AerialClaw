@@ -2094,10 +2094,11 @@ def on_device_connect(data):
     if not dm.validate_token(device_id, token):
         emit("device_connected", {"ok": False, "error": "Token 无效"})
         return
-    dm.set_ws_sid(device_id, request.sid)
-    # 注册指令下发回调
+    device_sid = request.sid  # 捕获当前 sid，闭包保存
+    dm.set_ws_sid(device_id, device_sid)
+    # 注册指令下发回调 — 用闭包捕获的 sid
     def send_action_to_device(payload):
-        socketio.emit("device_action", payload, to=request.sid)
+        socketio.emit("device_action", payload, to=device_sid)
     dm.set_action_callback(device_id, send_action_to_device)
     emit("device_connected", {"ok": True, "device_id": device_id, "message": "WebSocket 已认证"})
     state.push_log("info", f"设备 WebSocket 认证: {device_id}")
