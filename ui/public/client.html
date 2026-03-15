@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AerialClaw Device</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; padding: 16px; }
+.card { background: #1a1f2e; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #2d3748; }
+.title { font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+.subtitle { font-size: 12px; color: #64748b; text-align: center; margin-bottom: 16px; }
+.status { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.dot.red { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+.dot.yellow { background: #f59e0b; }
+.label { color: #94a3b8; font-size: 12px; margin-bottom: 2px; }
+.value { font-size: 15px; font-weight: 500; margin-bottom: 10px; }
+.btn { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.btn-primary { background: #3b82f6; color: white; }
+.btn-danger { background: #ef4444; color: white; }
+.btn-secondary { background: #374151; color: #e2e8f0; }
+.btn:disabled { opacity: 0.5; }
+.sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sensor-item { background: #111827; border-radius: 8px; padding: 10px; text-align: center; }
+.sensor-val { font-size: 18px; font-weight: 700; color: #60a5fa; }
+.sensor-label { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.log { font-size: 12px; color: #94a3b8; max-height: 120px; overflow-y: auto; background: #111827; border-radius: 8px; padding: 8px; font-family: monospace; }
+.log-entry { margin-bottom: 2px; }
+input { width: 100%; padding: 10px; background: #111827; border: 1px solid #374151; border-radius: 8px; color: #e2e8f0; font-size: 14px; margin-bottom: 8px; }
+.cmd { background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 8px; padding: 10px; margin-bottom: 6px; }
+.cmd-name { font-weight: 700; color: #60a5fa; }
+</style>
+</head>
+<body>
+
+<div class="title">AerialClaw</div>
+<div class="subtitle">Universal Device Client</div>
+
+<!-- 连接配置 -->
+<div class="card" id="connectCard">
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">未连接</span>
+  </div>
+  <input id="serverUrl" placeholder="服务器地址 (如 http://10.195.196.228:5001)" />
+  <input id="deviceId" placeholder="设备 ID (如 my_phone)" />
+  <button class="btn btn-primary" id="connectBtn" onclick="toggleConnect()">连接</button>
+</div>
+
+<!-- 传感器数据 -->
+<div class="card" id="sensorCard" style="display:none">
+  <div class="label">传感器数据 (实时上报)</div>
+  <div class="sensor-grid">
+    <div class="sensor-item">
+      <div class="sensor-val" id="gpsLat">--</div>
+      <div class="sensor-label">纬度</div>
+    </div>
+    <div class="sensor-item">
+      <div class="sensor-val" id="gpsLng">--</div>
+      <div class="sensor-label">经度</div>
+    </div>
+    <div class="sensor-item">
+      <div class="sensor-val" id="accelX">--</div>
+      <div class="sensor-label">加速度 X</div>
+    </div>
+    <div class="sensor-item">
+      <div class="sensor-val" id="accelY">--</div>
+      <div class="sensor-label">加速度 Y</div>
+    </div>
+    <div class="sensor-item">
+      <div class="sensor-val" id="battery">--</div>
+      <div class="sensor-label">电量 %</div>
+    </div>
+    <div class="sensor-item">
+      <div class="sensor-val" id="orientation">--</div>
+      <div class="sensor-label">朝向 °</div>
+    </div>
+  </div>
+</div>
+
+<!-- 收到的指令 -->
+<div class="card" id="cmdCard" style="display:none">
+  <div class="label">收到的指令</div>
+  <div id="cmdList"><span style="color:#6b7280">等待指令...</span></div>
+</div>
+
+<!-- 日志 -->
+<div class="card" id="logCard" style="display:none">
+  <div class="label">日志</div>
+  <div class="log" id="logArea"></div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+let socket = null;
+let token = null;
+let connected = false;
+let heartbeatTimer = null;
+let sensorTimer = null;
+
+function log(msg) {
+  const el = document.getElementById('logArea');
+  const t = new Date().toLocaleTimeString();
+  el.innerHTML = `<div class="log-entry">[${t}] ${msg}</div>` + el.innerHTML;
+}
+
+function setStatus(status, text) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'dot ' + status;
+  document.getElementById('statusText').textContent = text;
+}
+
+async function toggleConnect() {
+  if (connected) { disconnect(); return; }
+  const url = document.getElementById('serverUrl').value.trim();
+  const did = document.getElementById('deviceId').value.trim() || 'phone_' + Date.now().toString(36);
+  if (!url) { alert('请输入服务器地址'); return; }
+  document.getElementById('deviceId').value = did;
+
+  setStatus('yellow', '连接中...');
+  log('注册设备: ' + did);
+
+  try {
+    // HTTP 注册
+    const r = await fetch(url + '/api/device/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        device_id: did,
+        device_type: 'PHONE',
+        capabilities: ['camera', 'gps', 'accelerometer', 'screen'],
+        sensors: ['gps', 'accelerometer', 'orientation', 'battery'],
+        protocol: 'websocket',
+        metadata: { userAgent: navigator.userAgent, platform: navigator.platform }
+      })
+    });
+    const data = await r.json();
+    if (!data.ok) { log('注册失败: ' + data.error); setStatus('red', '注册失败'); return; }
+    token = data.token;
+    log('注册成功, token=' + token.substring(0, 20) + '...');
+
+    // WebSocket 连接
+    socket = io(url, { transports: ['websocket'] });
+    socket.on('connect', () => {
+      socket.emit('device_connect', { device_id: did, token: token });
+      log('WebSocket 已连接');
+    });
+    socket.on('device_connected', (d) => {
+      if (d.ok) {
+        connected = true;
+        setStatus('green', '已连接: ' + did);
+        document.getElementById('connectBtn').textContent = '断开';
+        document.getElementById('connectBtn').className = 'btn btn-danger';
+        document.getElementById('sensorCard').style.display = '';
+        document.getElementById('cmdCard').style.display = '';
+        document.getElementById('logCard').style.display = '';
+        startHeartbeat(did);
+        startSensors(did);
+        log('设备认证成功');
+      }
+    });
+    socket.on('device_action', (action) => {
+      log('收到指令: ' + action.action);
+      showCommand(action);
+      // 自动回报执行成功
+      socket.emit('action_result', {
+        action_id: action.action_id, device_id: did,
+        success: true, message: '手机端已收到', output: {}
+      });
+    });
+    socket.on('disconnect', () => { log('WebSocket 断开'); setStatus('red', '断开'); });
+  } catch(e) {
+    log('连接失败: ' + e.message);
+    setStatus('red', '连接失败');
+  }
+}
+
+function disconnect() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (sensorTimer) clearInterval(sensorTimer);
+  if (socket) socket.disconnect();
+  connected = false;
+  setStatus('red', '已断开');
+  document.getElementById('connectBtn').textContent = '连接';
+  document.getElementById('connectBtn').className = 'btn btn-primary';
+  log('已断开连接');
+}
+
+function startHeartbeat(did) {
+  heartbeatTimer = setInterval(() => {
+    if (socket && connected) socket.emit('heartbeat', { device_id: did });
+  }, 5000);
+}
+
+function startSensors(did) {
+  // GPS
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition((pos) => {
+      document.getElementById('gpsLat').textContent = pos.coords.latitude.toFixed(5);
+      document.getElementById('gpsLng').textContent = pos.coords.longitude.toFixed(5);
+      if (socket && connected) {
+        socket.emit('device_sensor', {
+          device_id: did, sensor_type: 'gps', sensor_id: 'gps',
+          data: { latitude: pos.coords.latitude, longitude: pos.coords.longitude,
+                  altitude: pos.coords.altitude, accuracy: pos.coords.accuracy }
+        });
+      }
+    }, null, { enableHighAccuracy: true });
+  }
+
+  // 加速度计
+  if (window.DeviceMotionEvent) {
+    window.addEventListener('devicemotion', (e) => {
+      if (e.accelerationIncludingGravity) {
+        const a = e.accelerationIncludingGravity;
+        document.getElementById('accelX').textContent = (a.x || 0).toFixed(1);
+        document.getElementById('accelY').textContent = (a.y || 0).toFixed(1);
+      }
+    });
+  }
+
+  // 朝向
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', (e) => {
+      document.getElementById('orientation').textContent = (e.alpha || 0).toFixed(0);
+    });
+  }
+
+  // 电量
+  if (navigator.getBattery) {
+    navigator.getBattery().then((bat) => {
+      const update = () => {
+        document.getElementById('battery').textContent = Math.round(bat.level * 100);
+        if (socket && connected) {
+          socket.emit('device_state', {
+            device_id: did, battery: Math.round(bat.level * 100),
+            status: bat.charging ? 'charging' : 'idle'
+          });
+        }
+      };
+      update();
+      bat.addEventListener('levelchange', update);
+    });
+  }
+
+  // 定时上报状态
+  sensorTimer = setInterval(() => {
+    if (socket && connected) {
+      socket.emit('device_state', { device_id: did, timestamp: Date.now() / 1000 });
+    }
+  }, 3000);
+}
+
+function showCommand(action) {
+  const el = document.getElementById('cmdList');
+  const t = new Date().toLocaleTimeString();
+  const html = `<div class="cmd">
+    <div class="cmd-name">${action.action}</div>
+    <div style="font-size:12px;color:#94a3b8">${t} | ${JSON.stringify(action.params || {})}</div>
+  </div>`;
+  el.innerHTML = html + el.innerHTML;
+}
+
+// 默认填入局域网地址
+document.getElementById('serverUrl').value = 'http://' + location.hostname + ':5001';
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  document.getElementById('serverUrl').value = 'http://10.195.196.228:5001';
+}
+document.getElementById('deviceId').value = 'phone_' + Math.random().toString(36).substring(2, 6);
+</script>
+</body>
+</html>
