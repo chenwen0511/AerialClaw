@@ -268,7 +268,7 @@ function DeviceDetail({ device, deviceState, socket, showToast }) {
     setSending(true)
     setCmdResult(null)
     try {
-      const res = await fetch('/api/device/action', {
+      const res = await fetch(`/api/device/${device.device_id}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
