@@ -23,11 +23,16 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 
 ---
 ---
+---
+
+## 📢 Update
+
+- **(2026/3/14)** AerialClaw v1.0 released — full agent loop, 12 hard skills, reflection engine, Web UI, PX4+Gazebo simulation.
+
 
 ## 📑 Table of Contents
 
-- [📢 Update](#-update)
-- [Research Background and Motivation](#research-background-and-motivation)
+- [Motivation](#motivation)
 - [System Architecture Design](#system-architecture-design)
 - [Decision Mechanism](#decision-mechanism-autonomous-loop-implementation)
 - [Skill System](#integrated-skill-system)
@@ -39,13 +44,7 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 - [Project Structure](#project-structure)
 - [Acknowledgements](#acknowledgements)
 
----
-
-## 📢 Update
-
-- **(2026/3/14)** AerialClaw v1.0 released — full agent loop, 12 hard skills, reflection engine, Web UI, PX4+Gazebo simulation.
-
-## Research Background and Motivation
+## Motivation
 
 Current drone systems mostly rely on pre-programmed scripts, lacking adaptability to unknown environments. AerialClaw explores endowing drones with **autonomous environmental understanding and real-time decision-making** through LLMs:
 
@@ -357,7 +356,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Acknowledgements
 
-Developed by ROBOTY Lab, School of Computer Science, Xidian University.
+Developed by ROBOTY Lab, School of Computer Science and Technology, Xidian University.
 
 Inspired by [OpenClaw](https://github.com/openclaw/openclaw). Built with:
 [PX4](https://px4.io/) · [Gazebo](https://gazebosim.org/) · [MAVSDK](https://mavsdk.mavlink.io/) · [React](https://react.dev/) · [Vite](https://vitejs.dev/)
