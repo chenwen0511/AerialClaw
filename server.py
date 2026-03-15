@@ -937,6 +937,15 @@ def api_sensor_lidar():
 # ── 前端静态文件服务 ──────────────────────────────────────────────────────────
 
 @app.route("/", defaults={"path": ""})
+@app.route("/body")
+def serve_body_sense_page():
+    """BodySense 实时硬件感知页面（手机友好）"""
+    body_html = os.path.join(_BASE_DIR, "ui", "body.html")
+    if os.path.exists(body_html):
+        return send_file(body_html)
+    return "<h2>body.html 不存在</h2>", 404
+
+
 @app.route("/<path:path>")
 def serve_frontend(path):
     """Serve React build dist. Non-API routes fall through to index.html (SPA)."""
@@ -1816,6 +1825,52 @@ def on_run_doctor():
         emit("doctor_report", report.to_dict())
     except Exception as e:
         emit("doctor_report", {"error": str(e)})
+
+
+# ── BodySense API ─────────────────────────────────────────────────────────────
+
+_body_sense_engine = None
+
+def _get_body_sense():
+    """获取或创建 BodySense 引擎单例"""
+    global _body_sense_engine
+    if _body_sense_engine is None:
+        from core.body_sense.engine import BodySenseEngine
+        _body_sense_engine = BodySenseEngine()
+        _body_sense_engine.auto_discover()
+        _body_sense_engine.start()
+        logger.info("BodySense 引擎已启动")
+    return _body_sense_engine
+
+
+@app.route("/api/body/snapshot", methods=["GET"])
+def api_body_snapshot():
+    """获取实时硬件状态快照"""
+    try:
+        engine = _get_body_sense()
+        return jsonify({"ok": True, **engine.snapshot()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/body/summary", methods=["GET"])
+def api_body_summary():
+    """获取一句话身体摘要（给 LLM 用）"""
+    try:
+        engine = _get_body_sense()
+        return jsonify({"ok": True, "summary": engine.summary()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@socketio.on("get_body_sense")
+def on_get_body_sense():
+    """WebSocket 获取实时硬件状态"""
+    try:
+        engine = _get_body_sense()
+        emit("body_sense_update", {"ok": True, **engine.snapshot()})
+    except Exception as e:
+        emit("body_sense_update", {"ok": False, "error": str(e)})
 
 
 # ── Safety API ────────────────────────────────────────────────────────────────
