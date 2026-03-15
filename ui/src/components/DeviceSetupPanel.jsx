@@ -558,7 +558,7 @@ function DeviceDetail({ device, deviceState, socket, showToast }) {
       </div>
 
       {/* AI 建档对话区 */}
-      <OnboardChat deviceId={device.device_id} />
+      {/* AI 建档在设备端 client.html 完成，控制台只展示结果 */}
 
       {/* 传感器数据 */}
       <div style={{ ...S.card, flexShrink: 0 }}>
