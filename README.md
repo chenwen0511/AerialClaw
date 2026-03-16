@@ -91,9 +91,25 @@ All documents use Markdown format, supporting version management and manual revi
 
 ### Integrated Skill System
 
-The system uses a **Hard Skills + Soft Skills** two-tier architecture. Hard skills are atomic actions that directly control the drone; soft skills are high-level strategies that the LLM executes by reading documentation and autonomously composing hard skills.
+The system uses a **four-layer skill architecture** inspired by human cognitive structure, where each layer handles a different level of abstraction:
 
-**Hard Skills (12 Atomic Actions)**:
+```
+┌─────────────────────────────────────────────────────┐
+│  Strategy Layer (Soft Skills)                        │  ← Knowledge documents, LLM-composed
+│  search_target, rescue_person, patrol_area           │
+├─────────────────────────────────────────────────────┤
+│  Cognitive Layer (Cognitive Skills)                   │  ← Information processing capabilities
+│  http_request, run_python, read_file, write_file     │
+├─────────────────────────────────────────────────────┤
+│  Perception Layer (Perception Skills)                │  ← Environmental awareness
+│  detect_object, observe, scan_area, fuse_perception  │
+├─────────────────────────────────────────────────────┤
+│  Motor Layer (Motor Skills)                          │  ← Physical actions
+│  takeoff, land, fly_to, hover, return_to_launch      │
+└─────────────────────────────────────────────────────┘
+```
+
+**Motor Skills (12 Atomic Actions)** — Physical control of the drone:
 
 | Category | Skills | Description |
 |:---|:---|:---|
@@ -101,6 +117,17 @@ The system uses a **Hard Skills + Soft Skills** two-tier architecture. Hard skil
 | Perception | `look_around` `detect_object` `fuse_perception` | Multi-directional observation, object detection (VLM), multi-sensor semantic fusion |
 | Status Query | `get_position` `get_battery` | Current position and battery status |
 | Markers | `mark_location` `get_marks` | Mark points of interest, query marked locations |
+
+**Cognitive Skills (4 Meta-Skills)** — Information processing and computation:
+
+| Skill | Description | Safety |
+|:---|:---|:---|
+| `run_python` | Execute Python code in sandboxed environment | Auto-sandboxed (Docker → subprocess → restricted) |
+| `http_request` | HTTP GET/POST requests for information retrieval | Internal network blocked, timeout enforced |
+| `read_file` | Read file contents | Restricted to working directory |
+| `write_file` | Write content to file | Restricted to working directory, audit logged |
+
+Cognitive skills give the agent **information-gathering and processing capabilities** beyond physical actions — e.g., checking weather APIs before deciding flight paths, or computing optimal routes using Python.
 
 **Soft Skills (Strategy Documents)**:
 
@@ -110,7 +137,9 @@ The system uses a **Hard Skills + Soft Skills** two-tier architecture. Hard skil
 | `rescue_person` | Personnel rescue — Full workflow from approach, assessment, marking to reporting |
 | `patrol_area` | Area patrol — Strategic area coverage with continuous anomaly monitoring |
 
-Soft skills are stored as Markdown documents. During execution, the LLM reads these documents to understand strategic intent and autonomously composes hard skills to complete tasks. The system also supports **dynamic soft skill generation**: when the LLM identifies recurring behavior patterns during reflection, it automatically extracts them into new strategy documents. We are also exploring the use of a **Skill Network to model soft skill composition and scheduling**, evolving strategy selection from pure LLM reasoning toward a learnable, optimizable decision network. Looking further ahead, we aim to decouple AerialClaw's core architecture into a **general-purpose framework for intelligent devices** — through a standardized protocol adaptation layer, any hardware with sensing and actuation capabilities could gain the same autonomous intelligence.
+Soft skills are stored as Markdown documents. During execution, the LLM reads these documents to understand strategic intent and autonomously composes motor, cognitive, and perception skills to complete tasks. The system also supports **dynamic soft skill generation**: when the LLM identifies recurring behavior patterns during reflection, it automatically extracts them into new strategy documents.
+
+We are also exploring the use of a **Skill Network to model soft skill composition and scheduling**, evolving strategy selection from pure LLM reasoning toward a learnable, optimizable decision network. Looking further ahead, we aim to decouple AerialClaw's core architecture into a **general-purpose framework for intelligent devices** — through a standardized protocol adaptation layer, any hardware with sensing and actuation capabilities could gain the same autonomous intelligence.
 
 ### Perception System
 
