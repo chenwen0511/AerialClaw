@@ -27,6 +27,7 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 
 ## 📢 Update
 
+- **(2026/3/16)** AerialClaw v2.0 synced to GitHub — safety envelope, four-layer memory, universal device protocol, self-evolution engine, hybrid deployment, AirSim adapter, device lifecycle system.
 - **(2026/3/14)** AerialClaw v1.0 released — full agent loop, 12 hard skills, reflection engine, Web UI, PX4+Gazebo simulation.
 
 
@@ -270,81 +271,134 @@ In the Web UI:
 
 ```
 AerialClaw/
-├── server.py                    # Service entry point
+├── server.py                    # Service entry point (REST + WebSocket)
 ├── config.py                    # Global config (reads from .env)
 ├── llm_client.py                # Multi-provider LLM client
-├── .env.example                 # Environment variable template
 ├── requirements.txt             # Python dependencies
 │
-├── brain/                       # Decision-making core
+├── brain/                       # Cognitive decision layer
 │   ├── agent_loop.py            #   Autonomous decision loop
-│   ├── planner_agent.py         #   LLM task planner
+│   ├── planner_agent.py         #   LLM task planner (memory-aware)
 │   └── chat_mode.py             #   Conversational mode
+│
+├── core/                        # Core systems (v2.0)
+│   ├── preflight.py             #   7-point startup self-check
+│   ├── doctor.py                #   Health scoring system (0-100)
+│   ├── doctor_checks/           #   Connection / sensor / AI / config checks
+│   ├── errors.py                #   10 exception classes + fix hints
+│   ├── logger.py                #   Color terminal + 7-day file rotation
+│   ├── device_manager.py        #   Universal device registry
+│   ├── device_analyzer.py       #   LLM-based capability inference
+│   ├── device_onboarding.py     #   Conversational device profiling
+│   ├── code_generator.py        #   Auto adapter code generation
+│   ├── skill_binder.py          #   Capability → skill matching
+│   ├── skill_evolver.py         #   Skill optimization engine
+│   ├── system_executor.py       #   Sandboxed code execution
+│   ├── capability_gap.py        #   Three-layer capability gap detection
+│   ├── bootstrap.py             #   System bootstrap orchestrator
+│   ├── nlu_engine.py            #   Natural language understanding
+│   ├── hybrid_planner.py        #   Edge-cloud hybrid planning
+│   ├── transport.py             #   Multi-protocol transport layer
+│   ├── failsafe.py              #   Failsafe state machine
+│   ├── body_sense/              #   Real-time hardware perception engine
+│   └── safety/                  #   Spinal safety architecture
+│       ├── command_filter.py    #     Command whitelist filter
+│       ├── sandbox.py           #     Auto-degrading sandbox (Docker→subprocess→restricted)
+│       ├── approval.py          #     Human-in-the-loop approval
+│       ├── flight_envelope.py   #     Hard-coded physical limits
+│       └── audit_log.py         #     Immutable audit trail
 │
 ├── perception/                  # Perception system
 │   ├── daemon.py                #   Passive perception daemon
-│   ├── vlm_analyzer.py          #   Active visual analysis (VLM)
+│   ├── vlm_analyzer.py          #   Active visual analysis (cloud VLM)
 │   ├── prompts.py               #   Perception prompts
 │   └── gz_camera.py             #   Gazebo camera bridge
 │
-├── skills/                      # Skill library
-│   ├── hard_skills.py           #   Hard skill implementations
-│   ├── soft_skills.py           #   Soft skill executor
-│   ├── docs/                    #   Hard skill documents (13)
-│   ├── soft_docs/               #   Soft skill strategy docs (3)
-│   └── dynamic_skill_gen.py     #   Dynamic skill generation
+├── skills/                      # Four-layer skill architecture
+│   ├── motor_skills.py          #   Motor layer: takeoff, land, fly_to, hover
+│   ├── perception_skills.py     #   Perception layer: detect, observe, scan
+│   ├── cognitive_skills.py      #   Cognitive layer: http_request, run_python
+│   ├── soft_skills.py           #   Strategy layer: document-driven composition
+│   ├── soft_docs/               #   Soft skill strategy documents (Markdown)
+│   ├── hard_skills.py           #   Legacy hard skill interface
+│   ├── registry.py              #   Skill registry (plug-and-play)
+│   ├── skill_loader.py          #   Dynamic skill loading
+│   ├── dynamic_skill_gen.py     #   Runtime skill generation
+│   └── docs/                    #   Skill documentation (13 skills)
 │
-├── memory/                      # Memory and learning
-│   ├── reflection_engine.py     #   Reflection engine
-│   ├── skill_evolution.py       #   Skill evolution
-│   ├── world_model.py           #   World model
-│   └── task_log.py              #   Task logger
+├── memory/                      # Four-layer memory system
+│   ├── memory_manager.py        #   Memory orchestrator
+│   ├── episodic_memory.py       #   Episodic memory (task history)
+│   ├── skill_memory.py          #   Skill memory (execution stats)
+│   ├── world_model.py           #   World model (environment state)
+│   ├── vector_store.py          #   Vector semantic search
+│   ├── shared_memory.py         #   Cross-device shared memory
+│   ├── reflection_engine.py     #   Post-task reflection (LLM)
+│   ├── skill_evolution.py       #   Skill evolution tracker
+│   └── task_log.py              #   Structured task logger
+│
+├── adapters/                    # Hardware abstraction layer
+│   ├── base_adapter.py          #   Abstract interface (all devices)
+│   ├── protocol_adapter.py      #   Universal device protocol (REST+WS)
+│   ├── adapter_manager.py       #   Multi-device adapter manager
+│   ├── adapter_factory.py       #   Adapter auto-creation
+│   ├── px4_adapter.py           #   PX4 SITL + MAVSDK
+│   ├── airsim_adapter.py        #   AirSim remote connection
+│   ├── sim_adapter.py           #   Simulation base adapter
+│   └── mock_adapter.py          #   Mock testing adapter
 │
 ├── robot_profile/               # Identity documents
 │   ├── SOUL.md / BODY.md        #   Personality & hardware description
 │   ├── MEMORY.md / SKILLS.md    #   Experience & skill self-description
-│   └── WORLD_MAP.md             #   Environment map
+│   ├── WORLD_MAP.md             #   Environment map
+│   └── body_generator.py        #   Auto BODY.md from live devices
 │
-├── adapters/                    # Hardware adaptation layer
-│   ├── base_adapter.py          #   Abstract interface
-│   ├── px4_adapter.py           #   PX4 adapter
-│   ├── sim_adapter.py           #   Simulation adapter
-│   └── mock_adapter.py          #   Mock testing adapter
+├── device_profiles/             # Per-device capability profiles (Markdown)
+│
+├── clients/                     # Multi-platform client SDKs
+│   ├── python/                  #   Python client library
+│   ├── arduino/                 #   Arduino/ESP32 client
+│   └── ros2/                    #   ROS2 bridge node
 │
 ├── sim/                         # Simulation resources
-│   ├── models/x500_sensor/      #   Custom drone model (5 cameras + LiDAR)
-│   ├── worlds/urban_rescue.sdf  #   Custom Gazebo world
-│   ├── airframes/               #   Custom airframe
-│   └── px4_patches.diff         #   PX4 customization patches
+│   ├── models/                  #   Custom Gazebo models
+│   ├── worlds/                  #   Custom Gazebo worlds
+│   ├── airframes/               #   Custom airframes
+│   └── sim_manager.py           #   Simulation lifecycle manager
+│
+├── simulator/                   # Standalone simulation client
+│   ├── sim_client.py            #   Decoupled sim device client
+│   └── start_sim.sh             #   One-click simulation launcher
 │
 ├── ui/                          # Web monitoring interface (React)
-│   └── src/components/          #   9 React components
-│
-├── scripts/                     # Scripts
-│   ├── setup_px4.sh             #   One-click PX4 install + patch
-│   └── start_gz_sim.sh          #   One-click simulation launcher
+│   └── src/components/          #   15 React components
 │
 ├── docs/                        # Developer documentation
 │   ├── ARCHITECTURE.md          #   System architecture
-│   ├── SIMULATION_SETUP.md      #   Simulation environment setup
-│   ├── ADAPTER_GUIDE.md         #   Adapter integration guide
-│   ├── SKILL_GUIDE.md           #   Skill development guide
-│   ├── PERCEPTION_GUIDE.md      #   Perception module guide
-│   └── LLM_CONFIG.md            #   LLM configuration guide
+│   ├── FAQ.md                   #   12 known issues + solutions
+│   └── ...                      #   Setup, adapter, skill, perception guides
 │
 └── assets/                      # Images and demo resources
 ```
 
 ## Research Progress and Plans
 
-### Implemented
-- [x] Autonomous decision loop · Identity & state management · 12 hard skills + 3 soft skills
+### Implemented (v2.0)
+- [x] Autonomous decision loop · Identity & state management · Four-layer skill architecture
 - [x] Passive + active dual-layer perception · Experience reflection · Dynamic skill generation
-- [x] PX4 + Gazebo simulation · Web monitoring & interaction interface
+- [x] PX4 + Gazebo simulation · Web monitoring & interaction interface (15 components)
+- [x] Spinal safety architecture — command filter → sandbox → approval → flight envelope
+- [x] Four-layer memory system — working / episodic / skill / world + vector search
+- [x] Universal device protocol — REST + WebSocket, any device can connect
+- [x] Self-evolution engine — device analysis → code generation → skill optimization
+- [x] Device lifecycle — conversational onboarding → capability profiling → skill binding
+- [x] Hybrid deployment — edge-cloud planning with automatic failover
+- [x] Multi-platform clients — Python SDK, Arduino/ESP32, ROS2 bridge
+- [x] AirSim adapter — remote simulation connection support
 
 ### Future Directions
-- [ ] Real drone porting · ROS2 integration · Sim2Real transfer
-- [ ] Multi-agent collaboration · General device framework · Safety decision boundaries
+- [ ] AirSim remote simulation validation · Real drone porting · Sim2Real transfer
+- [ ] Multi-agent collaboration · MCP standard interface · Cross-device shared learning
 
 ## Contribution
 
