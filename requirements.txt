@@ -17,9 +17,22 @@ flask-cors>=4.0.0
 mavsdk>=2.0.0
 pymavlink>=2.4.0
 
-# ── LLM (optional - for Anthropic models) ────────────────────
-# anthropic>=0.20.0
+# ── Memory & Vector Search ───────────────────────────────────
+sentence-transformers>=2.2.0
+chromadb>=0.4.0
 
-# ── Simulation Sensors ───────────────────────────────────────
-# opencv-python>=4.8.0    # Optional: for camera frame processing
-# Pillow>=10.0.0          # Optional: for image encoding
+# ── LLM ──────────────────────────────────────────────────────
+openai>=1.0.0
+
+# ── Optional: Simulation Sensors ─────────────────────────────
+# opencv-python>=4.8.0
+# Pillow>=10.0.0
+
+# ── Optional: AirSim ─────────────────────────────────────────
+# airsim>=1.8.1
+
+# ── Optional: Serial/Transport ───────────────────────────────
+# pyserial-asyncio>=0.6
+
+# ── Optional: ROS2 Bridge ────────────────────────────────────
+# rclpy (install via ROS2, not pip)
