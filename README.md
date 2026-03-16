@@ -23,19 +23,20 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 
 ---
 ---
+---
+
+## 📢 Update
+
+- **(2026/3/14)** AerialClaw v1.0 released — full agent loop, 12 hard skills, reflection engine, Web UI, PX4+Gazebo simulation.
+
 
 ## 📑 Table of Contents
 
-- [📢 Update](#-update)
-- [Research Background and Motivation](#research-background-and-motivation)
+- [Motivation](#motivation)
 - [System Architecture Design](#system-architecture-design)
 - [Decision Mechanism](#decision-mechanism-autonomous-loop-implementation)
 - [Skill System](#integrated-skill-system)
 - [Perception System](#perception-system)
-- [Safety Architecture](#safety-architecture)
-- [Memory System](#memory-system)
-- [Universal Device Protocol](#universal-device-protocol)
-- [Self-Evolution](#self-evolution)
 - [Simulation Environment](#simulation-verification-environment)
 - [Web Monitoring Interface](#web-monitoring-interface)
 - [Installation and Deployment](#installation-and-deployment)
@@ -43,14 +44,7 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 - [Project Structure](#project-structure)
 - [Acknowledgements](#acknowledgements)
 
----
-
-## 📢 Update
-
-- **(2026/3/15)** AerialClaw v2.0 released — safety envelope, four-layer memory, universal device protocol, self-evolution engine, hybrid deployment.
-- **(2026/3/14)** AerialClaw v1.0 released — full agent loop, 12 hard skills, reflection engine, Web UI, PX4+Gazebo simulation.
-
-## Research Background and Motivation
+## Motivation
 
 Current drone systems mostly rely on pre-programmed scripts, lacking adaptability to unknown environments. AerialClaw explores endowing drones with **autonomous environmental understanding and real-time decision-making** through LLMs:
 
@@ -96,25 +90,9 @@ All documents use Markdown format, supporting version management and manual revi
 
 ### Integrated Skill System
 
-The system uses a **four-layer skill architecture** inspired by human cognitive structure:
+The system uses a **Hard Skills + Soft Skills** two-tier architecture. Hard skills are atomic actions that directly control the drone; soft skills are high-level strategies that the LLM executes by reading documentation and autonomously composing hard skills.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Strategy Layer (Soft Skills)                        │  ← Knowledge documents, LLM-composed
-│  search_target, rescue_person, patrol_area           │
-├─────────────────────────────────────────────────────┤
-│  Cognitive Layer (Cognitive Skills)                   │  ← Information processing capabilities
-│  http_request, run_python, read_file, write_file     │
-├─────────────────────────────────────────────────────┤
-│  Perception Layer (Perception Skills)                │  ← Environmental awareness
-│  detect_object, observe, scan_area, fuse_perception  │
-├─────────────────────────────────────────────────────┤
-│  Motor Layer (Motor Skills)                          │  ← Physical actions
-│  takeoff, land, fly_to, hover, return_to_launch      │
-└─────────────────────────────────────────────────────┘
-```
-
-**Motor Skills (12 Atomic Actions)** — Physical control of the drone:
+**Hard Skills (12 Atomic Actions)**:
 
 | Category | Skills | Description |
 |:---|:---|:---|
@@ -122,17 +100,6 @@ The system uses a **four-layer skill architecture** inspired by human cognitive 
 | Perception | `look_around` `detect_object` `fuse_perception` | Multi-directional observation, object detection (VLM), multi-sensor semantic fusion |
 | Status Query | `get_position` `get_battery` | Current position and battery status |
 | Markers | `mark_location` `get_marks` | Mark points of interest, query marked locations |
-
-**Cognitive Skills (4 Meta-Skills)** — Information processing and computation:
-
-| Skill | Description | Safety |
-|:---|:---|:---|
-| `run_python` | Execute Python code in sandboxed environment | Auto-sandboxed (Docker → subprocess → restricted) |
-| `http_request` | HTTP GET/POST requests for information retrieval | Internal network blocked, timeout enforced |
-| `read_file` | Read file contents | Restricted to working directory |
-| `write_file` | Write content to file | Restricted to working directory, audit logged |
-
-Cognitive skills give the agent **information-gathering and processing capabilities** beyond physical actions — e.g., checking weather APIs before deciding flight paths, or computing optimal routes using Python.
 
 **Soft Skills (Strategy Documents)**:
 
@@ -142,9 +109,7 @@ Cognitive skills give the agent **information-gathering and processing capabilit
 | `rescue_person` | Personnel rescue — Full workflow from approach, assessment, marking to reporting |
 | `patrol_area` | Area patrol — Strategic area coverage with continuous anomaly monitoring |
 
-Soft skills are stored as Markdown documents. During execution, the LLM reads these documents to understand strategic intent and autonomously composes motor, cognitive, and perception skills to complete tasks. The system also supports **dynamic soft skill generation**: when the LLM identifies recurring behavior patterns during reflection, it automatically extracts them into new strategy documents.
-
-**Capability Gap Detection**: When the LLM plans a skill that doesn't exist, the system detects it *before execution* and classifies the gap as either `software` (auto-fillable via code generation) or `hardware` (requires physical capability the device lacks). This **self-aware capability boundary** prevents hallucinated plans from reaching the execution layer.
+Soft skills are stored as Markdown documents. During execution, the LLM reads these documents to understand strategic intent and autonomously composes hard skills to complete tasks. The system also supports **dynamic soft skill generation**: when the LLM identifies recurring behavior patterns during reflection, it automatically extracts them into new strategy documents. We are also exploring the use of a **Skill Network to model soft skill composition and scheduling**, evolving strategy selection from pure LLM reasoning toward a learnable, optimizable decision network. Looking further ahead, we aim to decouple AerialClaw's core architecture into a **general-purpose framework for intelligent devices** — through a standardized protocol adaptation layer, any hardware with sensing and actuation capabilities could gain the same autonomous intelligence.
 
 ### Perception System
 
@@ -160,99 +125,6 @@ This design supports research across various application scenarios:
 - 🌲 **Ecological Monitoring** — Anomaly detection in forested areas
 - 🏗️ **Facility Inspection** — Safety inspection of building structures
 - 🌾 **Agricultural Observation** — Assessment of crop growth status
-
-## Safety Architecture
-
-AerialClaw treats safety as a **hardware-level guarantee**, not an LLM-level policy. Four sequential gates protect every command:
-
-```
-Command → [Gate 1: Filter] → [Gate 2: Sandbox] → [Gate 3: Approval] → [Gate 4: Envelope] → Execution
-```
-
-| Gate | Mechanism | Description |
-|------|-----------|-------------|
-| **1. Command Filter** | Whitelist / Blacklist | Blocks prohibited commands before reaching the planner |
-| **2. Sandbox Isolation** | Docker → subprocess → restricted (auto-downgrade) | Code execution never touches the host system |
-| **3. Tiered Approval** | `auto` / `confirm` / `deny` | Operator-configurable per-action authorization level |
-| **4. Safety Envelope** | Hard-coded physical limits | LLM cannot override — enforced at the adapter layer |
-
-**Safety Envelope Parameters** (hard-coded, LLM-unreachable):
-
-| Limit | Value |
-|-------|-------|
-| Max speed | 10 m/s |
-| Max altitude | 120 m |
-| Battery RTL threshold | 15% |
-| Battery forced-land threshold | 5% |
-| Heartbeat timeout | 10 s |
-
-**"Spinal Cord" Architecture**: The LLM is the brain (capable of mistakes); the safety envelope is the spinal cord (hard-coded reflexes). Even a hallucinating LLM cannot command the drone beyond physical safety limits.
-
-- **Audit Log**: All commands, decisions, and safety interventions are recorded and exportable.
-- **Safety Levels**: Switch between `strict` / `standard` / `permissive` with a single config change.
-
-## Memory System
-
-The four-layer memory architecture balances immediate context, accumulated experience, and semantic retrieval:
-
-```
-┌─────────────────────────────────────────────────┐
-│  Working Memory    — Current task context        │  Short-term, cleared per task
-├─────────────────────────────────────────────────┤
-│  Episodic Memory   — Task histories & outcomes  │  Persistent, retrieved by similarity
-├─────────────────────────────────────────────────┤
-│  Skill Memory      — Execution statistics        │  Success rates, failure patterns
-├─────────────────────────────────────────────────┤
-│  World Knowledge   — Environmental discoveries  │  Landmarks, hazards, map features
-└─────────────────────────────────────────────────┘
-```
-
-- **Vector Semantic Retrieval** — `chromadb` primary with `TF-IDF` auto-fallback; no external service required
-- **Reflection Engine** — After each task: task log → LLM reflection → memory update → informs next planning cycle
-- **Planning-time Retrieval** — Relevant past experiences fetched and injected at planning time, replacing full-history injection to control token usage
-- **Cross-task Transfer** — Experience from one platform or scenario generalizes to similar future tasks
-
-## Universal Device Protocol
-
-Any device implementing this protocol can be controlled by AerialClaw — no custom adapter required for basic operations.
-
-**Dual-channel communication**: HTTP REST (commands & registration) + WebSocket (real-time telemetry)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/devices/register` | POST | Device registration with capability declaration |
-| `/devices/{id}/status` | POST | Status reporting |
-| `/devices/{id}/sensors` | POST | Sensor data upload |
-| `/devices/{id}/command` | POST | Command dispatch |
-| `/devices/{id}/heartbeat` | POST | Keep-alive (10 s timeout → auto-offline) |
-
-- **Token authentication** on all endpoints
-- **Heartbeat watchdog**: 10-second timeout triggers automatic device-offline status
-- **Three client templates** included: Python · Arduino (ESP32) · ROS2 — see [`clients/README.md`](clients/README.md)
-
-## Self-Evolution
-
-AerialClaw can extend its own capabilities when encountering new devices or skill gaps:
-
-**Device Analyzer** — When a new device is registered:
-1. LLM analyzes the device's declared capabilities
-2. Auto-generates a `BODY.md` tailored to the device
-3. Matches against existing skills; flags gaps for generation
-
-**Code Generator** — For `software`-class capability gaps:
-1. LLM generates a Python adapter from scratch
-2. Runs in sandbox — automatic self-repair on failure
-3. Deploys to the adapter library on success
-
-**Skill Evolver** — Continuous skill improvement:
-1. Analyzes per-skill performance statistics from `SKILLS.md`
-2. LLM proposes strategy improvements; under-performing skills are retired
-3. New strategy documents are promoted automatically
-
-**Capability Gap Detection** — Three-layer defense before execution:
-- `software` gap → trigger code generation pipeline
-- `hardware` gap → reject with clear explanation; no hallucinated execution
-- "Onboarding a new platform" is itself a soft skill that can run end-to-end automatically
 
 ## Simulation Verification Environment
 
@@ -416,19 +288,13 @@ AerialClaw/
 │   └── gz_camera.py             #   Gazebo camera bridge
 │
 ├── skills/                      # Skill library
-│   ├── motor_skills.py          #   Motor skills (physical layer, 12 actions)
-│   ├── cognitive_skills.py      #   Cognitive skills (info layer, 4 meta-skills)
-│   ├── perception_skills.py     #   Perception skills (sensing layer)
-│   ├── hard_skills.py           #   Compatibility import layer
+│   ├── hard_skills.py           #   Hard skill implementations
 │   ├── soft_skills.py           #   Soft skill executor
-│   ├── docs/                    #   Skill documents (13)
-│   ├── soft_docs/               #   Soft skill strategy docs (4)
+│   ├── docs/                    #   Hard skill documents (13)
+│   ├── soft_docs/               #   Soft skill strategy docs (3)
 │   └── dynamic_skill_gen.py     #   Dynamic skill generation
 │
 ├── memory/                      # Memory and learning
-│   ├── vector_store.py          #   Vector storage (chromadb / TF-IDF fallback)
-│   ├── memory_manager.py        #   Four-layer memory manager
-│   ├── shared_memory.py         #   Cross-device shared memory
 │   ├── reflection_engine.py     #   Reflection engine
 │   ├── skill_evolution.py       #   Skill evolution
 │   ├── world_model.py           #   World model
@@ -441,7 +307,6 @@ AerialClaw/
 │
 ├── adapters/                    # Hardware adaptation layer
 │   ├── base_adapter.py          #   Abstract interface
-│   ├── protocol_adapter.py      #   Universal protocol adapter
 │   ├── px4_adapter.py           #   PX4 adapter
 │   ├── sim_adapter.py           #   Simulation adapter
 │   └── mock_adapter.py          #   Mock testing adapter
@@ -453,18 +318,7 @@ AerialClaw/
 │   └── px4_patches.diff         #   PX4 customization patches
 │
 ├── ui/                          # Web monitoring interface (React)
-│   └── src/components/          #   11 React components
-│
-├── core/                        # Core infrastructure
-│   ├── safety/                  #   Four-gate safety system
-│   ├── device_manager.py        #   Universal device manager
-│   ├── capability_gap.py        #   Capability gap detection
-│   ├── device_analyzer.py       #   LLM device analysis
-│   ├── code_generator.py        #   LLM adapter generation
-│   ├── skill_evolver.py         #   Skill evolution engine
-│   ├── doctor.py                #   System health checks
-│   ├── errors.py                #   Unified exception system
-│   └── logger.py                #   Logging system
+│   └── src/components/          #   9 React components
 │
 ├── scripts/                     # Scripts
 │   ├── setup_px4.sh             #   One-click PX4 install + patch
@@ -484,19 +338,13 @@ AerialClaw/
 ## Research Progress and Plans
 
 ### Implemented
-- [x] Autonomous decision loop · Identity & state management · 12 motor skills + 4 cognitive skills + 3 soft skills
-- [x] Passive + active dual-layer perception · Experience reflection · Dynamic skill generation · Skill retirement
-- [x] PX4 + Gazebo simulation · Web monitoring & interaction · Cockpit FPV
-- [x] Four-layer memory system · Vector semantic retrieval · Cross-task experience transfer
-- [x] Universal device protocol (HTTP + WebSocket) · Three-platform client templates
-- [x] Four-gate safety system · Hard-coded safety envelope · Operation audit log
-- [x] Adaptive sandbox · Cognitive skills · Capability gap detection
-- [x] Self-evolution · LLM device analysis · Adapter auto-generation
-- [x] Hybrid deployment · Offline emergency mode · Edge-cloud coordination
+- [x] Autonomous decision loop · Identity & state management · 12 hard skills + 3 soft skills
+- [x] Passive + active dual-layer perception · Experience reflection · Dynamic skill generation
+- [x] PX4 + Gazebo simulation · Web monitoring & interaction interface
 
 ### Future Directions
 - [ ] Real drone porting · ROS2 integration · Sim2Real transfer
-- [ ] Multi-agent collaboration · Shared world model
+- [ ] Multi-agent collaboration · General device framework · Safety decision boundaries
 
 ## Contribution
 
@@ -508,7 +356,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Acknowledgements
 
-Developed by ROBOTY Lab, School of Computer Science, Xidian University.
+Developed by ROBOTY Lab, School of Computer Science and Technology, Xidian University.
 
 Inspired by [OpenClaw](https://github.com/openclaw/openclaw). Built with:
 [PX4](https://px4.io/) · [Gazebo](https://gazebosim.org/) · [MAVSDK](https://mavsdk.mavlink.io/) · [React](https://react.dev/) · [Vite](https://vitejs.dev/)
