@@ -226,6 +226,9 @@ def _do_init():
         socketio.emit("skill_catalog", _get_skill_catalog())
         socketio.emit("system_status", _get_system_status())
 
+        # 连接仿真适配器
+        _try_connect_adapter()
+
         # 启动设备管理器
         _get_device_manager()
 
@@ -239,16 +242,30 @@ def _try_connect_adapter():
     def _connect():
         try:
             from adapters.adapter_manager import init_adapter, get_adapter
-            state.push_log("info", "正在连接仿真适配器 (PX4 MAVSDK)...")
-            ok = init_adapter("px4", connection_str="udp://:14540", timeout=10)
+            import os
+            sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+
+            if sim_adapter == "airsim":
+                host = os.getenv("AIRSIM_HOST", "127.0.0.1")
+                port = os.getenv("AIRSIM_PORT", "41451")
+                conn_str = f"{host}:{port}"
+                state.push_log("info", f"Connecting to AirSim adapter ({conn_str})...")
+                ok = init_adapter("airsim", connection_str=conn_str, timeout=15)
+            elif sim_adapter == "mock":
+                state.push_log("info", "Using mock adapter (no hardware)...")
+                ok = init_adapter("mock", timeout=5)
+            else:
+                state.push_log("info", "Connecting to PX4 adapter (MAVSDK)...")
+                ok = init_adapter("px4", connection_str="udp://:14540", timeout=10)
+
             adapter = get_adapter()
             if ok:
-                state.push_log("success", f"✅ 仿真适配器连接成功: {adapter.name}")
+                state.push_log("success", f"✅ Adapter connected: {adapter.name}")
             else:
-                state.push_log("warn", f"仿真适配器降级为: {adapter.name}")
+                state.push_log("warn", f"Adapter degraded to: {adapter.name}")
             _start_telemetry_sync()
         except Exception as e:
-            state.push_log("warn", f"仿真适配器不可用: {e}，以 mock 模式运行")
+            state.push_log("warn", f"Adapter unavailable: {e}, running in mock mode")
 
     t = threading.Thread(target=_connect, daemon=True)
     t.start()
