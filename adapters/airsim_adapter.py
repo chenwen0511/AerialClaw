@@ -109,7 +109,7 @@ class AirSimAdapter(SimAdapter):
 
     def get_position(self) -> Optional[Position]:
         s = self.get_state()
-        return s.position if s else None
+        return s.position_ned if s else None
 
     def get_gps(self) -> Optional[GPSPosition]:
         return None  # SimpleFlight 无真实 GPS

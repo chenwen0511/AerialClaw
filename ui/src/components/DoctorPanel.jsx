@@ -1,233 +1,458 @@
-/**
- * DoctorPanel.jsx — 系统健康检查面板
- */
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react';
+import { io } from 'socket.io-client';
 
-const CATEGORY_LABELS = {
-  connection: '连接',
-  sensor:     '传感器',
-  ai:         'AI 模型',
-  config:     '配置',
-}
-
-const CATEGORY_ICONS = {
-  connection: '🔗',
-  sensor:     '📡',
-  ai:         '🤖',
-  config:     '⚙️',
-}
+const COLORS = {
+  bg: 'rgba(15,23,42,.7)',
+  bgSolid: '#0f172b',
+  accent: '#00d4ff',
+  success: '#4ade80',
+  error: '#f87171',
+  warn: '#fbbf24',
+  text: '#e2e8f0',
+  textDim: '#94a3b8',
+  border: 'rgba(255,255,255,.08)',
+};
 
 const S = {
   panel: {
-    display: 'flex', flexDirection: 'column', gap: 12,
-    height: '100%', overflow: 'hidden',
-    color: '#e2e8f0', fontSize: 13,
-    padding: 16,
+    background: COLORS.bg,
+    backdropFilter: 'blur(20px)',
+    borderRadius: 16,
+    border: '1px solid ' + COLORS.border,
+    color: COLORS.text,
+    fontFamily: "'Inter','SF Pro Display',system-ui,sans-serif",
+    padding: 24,
+    minHeight: 520,
+    display: 'flex',
+    flexDirection: 'column',
   },
-  card: {
-    background: 'rgba(15,23,42,.7)',
-    border: '1px solid rgba(0,212,255,.15)',
+  header: {
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: 700,
+    margin: 0,
+    color: '#fff',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: COLORS.textDim,
+    marginTop: 4,
+  },
+  tabs: {
+    display: 'flex',
+    gap: 4,
+    marginBottom: 20,
+    background: 'rgba(255,255,255,.04)',
+    borderRadius: 10,
+    padding: 4,
+  },
+  tab: (active) => ({
+    flex: 1,
+    padding: '8px 0',
+    border: 'none',
     borderRadius: 8,
-    padding: 14,
-  },
-  btnRun: {
-    background: 'linear-gradient(135deg,rgba(0,212,255,.25),rgba(0,212,255,.1))',
-    border: '1px solid rgba(0,212,255,.5)',
-    borderRadius: 8,
-    color: '#00d4ff', fontSize: 14, fontWeight: 700,
-    padding: '10px 28px', cursor: 'pointer',
-  },
-  sectionTitle: {
-    fontSize: 11, fontWeight: 700, color: '#00d4ff',
-    textTransform: 'uppercase', letterSpacing: '0.06em',
-    marginBottom: 10,
-  },
-  checkRow: (status) => ({
-    display: 'flex', alignItems: 'flex-start', gap: 10,
-    padding: '9px 12px',
-    background: status === 'ok'   ? 'rgba(34,197,94,.06)'
-              : status === 'warn' ? 'rgba(245,158,11,.06)'
-              :                     'rgba(239,68,68,.06)',
-    border: `1px solid ${
-      status === 'ok'   ? 'rgba(34,197,94,.2)'
-    : status === 'warn' ? 'rgba(245,158,11,.2)'
-    :                     'rgba(239,68,68,.2)'
-    }`,
-    borderRadius: 7,
-    marginBottom: 6,
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600,
+    transition: 'all .2s',
+    background: active ? COLORS.accent : 'transparent',
+    color: active ? '#000' : COLORS.textDim,
   }),
-}
+  body: {
+    flex: 1,
+    overflowY: 'auto',
+    minHeight: 0,
+  },
+  btn: (color) => ({
+    padding: '10px 20px',
+    border: 'none',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: 14,
+    background: color,
+    color: color === COLORS.warn ? '#000' : '#fff',
+    transition: 'opacity .2s',
+  }),
+  stepCard: {
+    background: 'rgba(255,255,255,.04)',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 10,
+    border: '1px solid ' + COLORS.border,
+  },
+  stepIter: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: COLORS.accent,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  stepThink: {
+    fontSize: 13,
+    color: COLORS.textDim,
+    marginBottom: 6,
+    fontStyle: 'italic',
+  },
+  stepTool: {
+    fontSize: 12,
+    color: COLORS.warn,
+    marginBottom: 4,
+  },
+  stepResult: (ok) => ({
+    fontSize: 12,
+    padding: '6px 10px',
+    borderRadius: 6,
+    background: ok ? 'rgba(74,222,128,.1)' : 'rgba(248,113,113,.1)',
+    color: ok ? COLORS.success : COLORS.error,
+    marginTop: 6,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  }),
+  chatBubble: (isUser) => ({
+    maxWidth: '75%',
+    padding: '10px 14px',
+    borderRadius: 12,
+    marginBottom: 8,
+    fontSize: 14,
+    lineHeight: 1.5,
+    alignSelf: isUser ? 'flex-end' : 'flex-start',
+    background: isUser ? COLORS.accent : 'rgba(255,255,255,.06)',
+    color: isUser ? '#000' : COLORS.text,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  }),
+  chatWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
+  },
+  chatMessages: {
+    flex: 1,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    paddingBottom: 12,
+  },
+  chatInput: {
+    display: 'flex',
+    gap: 8,
+    marginTop: 12,
+  },
+  input: {
+    flex: 1,
+    padding: '10px 14px',
+    borderRadius: 8,
+    border: '1px solid ' + COLORS.border,
+    background: 'rgba(255,255,255,.05)',
+    color: COLORS.text,
+    fontSize: 14,
+    outline: 'none',
+  },
+  scoreWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'column',
+    padding: 30,
+  },
+  scoreCircle: (score) => ({
+    width: 120,
+    height: 120,
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 36,
+    fontWeight: 800,
+    border: '4px solid ' + (score >= 80 ? COLORS.success : score >= 50 ? COLORS.warn : COLORS.error),
+    color: score >= 80 ? COLORS.success : score >= 50 ? COLORS.warn : COLORS.error,
+    marginBottom: 12,
+  }),
+  listItem: (type) => ({
+    padding: '8px 12px',
+    borderRadius: 6,
+    marginBottom: 6,
+    fontSize: 13,
+    background: type === 'issue' ? 'rgba(248,113,113,.08)' : 'rgba(74,222,128,.08)',
+    color: type === 'issue' ? COLORS.error : COLORS.success,
+    borderLeft: '3px solid ' + (type === 'issue' ? COLORS.error : COLORS.success),
+  }),
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    color: COLORS.textDim,
+    marginBottom: 8,
+    marginTop: 16,
+  },
+};
 
-function statusIcon(s) {
-  if (s === 'ok')   return { icon: '✅', color: '#4ade80' }
-  if (s === 'warn') return { icon: '⚠️', color: '#fbbf24' }
-  return               { icon: '❌', color: '#f87171' }
-}
+function DoctorPanel() {
+  const [tab, setTab] = useState('auto');
+  const [running, setRunning] = useState(false);
+  const [steps, setSteps] = useState([]);
+  const [status, setStatus] = useState(null);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [diagResult, setDiagResult] = useState(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const stepsEndRef = useRef(null);
+  const chatEndRef = useRef(null);
+  const socketRef = useRef(null);
+  const pollRef = useRef(null);
 
-function scoreColor(score) {
-  if (score >= 80) return '#4ade80'
-  if (score >= 50) return '#fbbf24'
-  return '#f87171'
-}
+  useEffect(() => {
+    const socket = io({ path: '/socket.io', transports: ['websocket'] });
+    socketRef.current = socket;
+    socket.on('doctor_step', (step) => {
+      setSteps((prev) => [...prev, step]);
+    });
+    return () => {
+      socket.disconnect();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
-export default function DoctorPanel() {
-  const [running,  setRunning]  = useState(false)
-  const [result,   setResult]   = useState(null) // { score, checks: [] }
-  const [error,    setError]    = useState(null)
+  useEffect(() => {
+    if (stepsEndRef.current) stepsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [steps]);
 
-  const handleRun = async () => {
-    setRunning(true)
-    setError(null)
+  useEffect(() => {
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
+
+  const startRun = async () => {
+    setRunning(true);
+    setSteps([]);
+    setStatus(null);
     try {
-      const res  = await fetch('/api/doctor/run')
-      const data = await res.json()
-      setResult(data)
+      await fetch('/api/doctor/run', { method: 'POST' });
+      pollRef.current = setInterval(async () => {
+        try {
+          const res = await fetch('/api/doctor/status');
+          const data = await res.json();
+          setStatus(data);
+          if (data.state === 'done' || data.state === 'error' || data.state === 'stopped') {
+            setRunning(false);
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
     } catch (e) {
-      setError('检查失败: ' + e.message)
-    } finally {
-      setRunning(false)
+      setRunning(false);
     }
-  }
+  };
 
-  // 按 category 分组
-  const grouped = {}
-  if (result?.checks) {
-    for (const c of result.checks) {
-      const cat = c.category || 'config'
-      if (!grouped[cat]) grouped[cat] = []
-      grouped[cat].push(c)
+  const stopRun = async () => {
+    try {
+      await fetch('/api/doctor/stop', { method: 'POST' });
+    } catch (e) { /* ignore */ }
+    setRunning(false);
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
-  }
+  };
 
-  return (
-    <div style={S.panel}>
-      {/* 标题 + 操作 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>系统健康检查</div>
-          <div style={{ fontSize: 11, color: '#475569' }}>检测连接、传感器、AI 和配置状态</div>
-        </div>
-        <button
-          style={{ ...S.btnRun, marginLeft: 'auto' }}
-          onClick={handleRun}
-          disabled={running}
-        >
-          {running ? '检查中…' : '▶ 运行检查'}
+  const sendChat = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
+    const newHistory = [...chatHistory, { role: 'user', content: msg }];
+    setChatHistory(newHistory);
+    setChatInput('');
+    setChatLoading(true);
+    try {
+      const res = await fetch('/api/doctor/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, history: newHistory }),
+      });
+      const data = await res.json();
+      setChatHistory((prev) => [...prev, { role: 'assistant', content: data.reply || data.message || 'No response' }]);
+    } catch (e) {
+      setChatHistory((prev) => [...prev, { role: 'assistant', content: 'Error: ' + e.message }]);
+    }
+    setChatLoading(false);
+  };
+
+  const runDiagnose = async () => {
+    setDiagLoading(true);
+    setDiagResult(null);
+    try {
+      const res = await fetch('/api/doctor/diagnose');
+      const data = await res.json();
+      setDiagResult(data);
+    } catch (e) {
+      setDiagResult({ score: 0, issues: ['Failed to run diagnose: ' + e.message], passed: [] });
+    }
+    setDiagLoading(false);
+  };
+
+  const handleChatKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  };
+
+  const renderAuto = () => (
+    <div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <button style={S.btn(COLORS.accent)} onClick={startRun} disabled={running}>
+          {running ? '⏳ 运行中...' : '🚀 开始'}
         </button>
+        <button style={S.btn(COLORS.error)} onClick={stopRun} disabled={!running}>
+          ⏹ 停止
+        </button>
+        {status && (
+          <span style={{ fontSize: 12, color: COLORS.textDim, alignSelf: 'center' }}>
+            状态: {status.state || 'unknown'}
+          </span>
+        )}
       </div>
-
-      {error && (
-        <div style={{
-          padding: '8px 12px', borderRadius: 7,
-          background: 'rgba(239,68,68,.1)',
-          border: '1px solid rgba(239,68,68,.3)',
-          color: '#f87171', fontSize: 12,
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* 健康分 */}
-      {result && (
-        <div style={{
-          ...S.card,
-          display: 'flex', alignItems: 'center', gap: 20,
-          flexShrink: 0,
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{
-              fontSize: 52, fontWeight: 800,
-              color: scoreColor(result.score ?? 0),
-              lineHeight: 1,
-              textShadow: `0 0 20px ${scoreColor(result.score ?? 0)}66`,
-            }}>
-              {result.score ?? '?'}
-            </div>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>健康分</div>
+      <div style={S.body}>
+        {steps.length === 0 && !running && (
+          <div style={{ textAlign: 'center', color: COLORS.textDim, padding: 40, fontSize: 14 }}>
+            点击 "🚀 开始" 启动 Doctor Agent 自主诊断
           </div>
-          <div style={{ flex: 1 }}>
-            {/* 进度条 */}
-            <div style={{ height: 8, borderRadius: 99, background: 'rgba(255,255,255,.06)', overflow: 'hidden', marginBottom: 10 }}>
-              <div style={{
-                height: '100%',
-                width: `${result.score ?? 0}%`,
-                borderRadius: 99,
-                background: `linear-gradient(90deg, ${scoreColor(result.score ?? 0)}aa, ${scoreColor(result.score ?? 0)})`,
-                transition: 'width .5s ease',
-                boxShadow: `0 0 8px ${scoreColor(result.score ?? 0)}55`,
-              }} />
-            </div>
-            <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
-              {['ok', 'warn', 'fail'].map(s => {
-                const cnt = (result.checks || []).filter(c => c.status === s).length
-                const { icon, color } = statusIcon(s)
-                return (
-                  <span key={s} style={{ color }}>
-                    {icon} {cnt}
-                  </span>
-                )
-              })}
-            </div>
-            {result.summary && (
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>{result.summary}</div>
+        )}
+        {steps.map((step, i) => (
+          <div key={i} style={S.stepCard}>
+            <div style={S.stepIter}>Iteration #{step.iteration || i + 1}</div>
+            {step.thinking && <div style={S.stepThink}>💭 {step.thinking}</div>}
+            {step.tool && (
+              <div style={S.stepTool}>
+                🔧 {step.tool}
+                {step.args ? ` (${typeof step.args === 'string' ? step.args : JSON.stringify(step.args)})` : ''}
+              </div>
+            )}
+            {step.result !== undefined && (
+              <div style={S.stepResult(step.success !== false)}>
+                {step.success === false ? '❌ ' : step.summary ? '📋 ' : '✅ '}
+                {step.summary || step.result || (step.success === false ? 'Error' : 'Done')}
+              </div>
             )}
           </div>
+        ))}
+        <div ref={stepsEndRef} />
+      </div>
+    </div>
+  );
+
+  const renderChat = () => (
+    <div style={S.chatWrap}>
+      <div style={S.chatMessages}>
+        {chatHistory.length === 0 && (
+          <div style={{ textAlign: 'center', color: COLORS.textDim, padding: 40, fontSize: 14 }}>
+            与 Doctor Agent 对话，询问设备状态或故障排查建议
+          </div>
+        )}
+        {chatHistory.map((msg, i) => (
+          <div key={i} style={S.chatBubble(msg.role === 'user')}>
+            {msg.content}
+          </div>
+        ))}
+        {chatLoading && (
+          <div style={S.chatBubble(false)}>
+            <span style={{ opacity: 0.6 }}>思考中...</span>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+      <div style={S.chatInput}>
+        <input
+          style={S.input}
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          onKeyDown={handleChatKeyDown}
+          placeholder="输入问题..."
+          disabled={chatLoading}
+        />
+        <button style={S.btn(COLORS.accent)} onClick={sendChat} disabled={chatLoading || !chatInput.trim()}>
+          发送
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderDiagnose = () => (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <button style={S.btn(COLORS.accent)} onClick={runDiagnose} disabled={diagLoading}>
+          {diagLoading ? '⏳ 诊断中...' : '🔍 开始诊断'}
+        </button>
+      </div>
+      {!diagResult && !diagLoading && (
+        <div style={{ textAlign: 'center', color: COLORS.textDim, padding: 40, fontSize: 14 }}>
+          点击 "🔍 开始诊断" 快速检查系统状态
         </div>
       )}
-
-      {/* 检查结果列表 */}
-      {result && Object.keys(grouped).length > 0 && (
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-          {Object.entries(grouped).map(([cat, checks]) => (
-            <div key={cat} style={{ ...S.card, marginBottom: 10 }}>
-              <div style={S.sectionTitle}>
-                {CATEGORY_ICONS[cat] || '•'} {CATEGORY_LABELS[cat] || cat}
-              </div>
-              {checks.map((c, i) => {
-                const { icon, color } = statusIcon(c.status)
-                return (
-                  <div key={i} style={S.checkRow(c.status)}>
-                    <span style={{ fontSize: 16, flexShrink: 0 }}>{icon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 12, color: '#e2e8f0' }}>{c.name}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{c.message}</div>
-                      {c.fix_hint && (
-                        <div style={{
-                          fontSize: 11, color: '#fbbf24',
-                          marginTop: 4, fontStyle: 'italic',
-                        }}>
-                          💡 {c.fix_hint}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+      {diagResult && (
+        <div>
+          <div style={S.scoreWrap}>
+            <div style={S.scoreCircle(diagResult.score)}>
+              {diagResult.score}
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* 空态 */}
-      {!result && !running && !error && (
-        <div style={{
-          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: 12, color: '#334155',
-        }}>
-          <div style={{ fontSize: 48 }}>🩺</div>
-          <div style={{ fontSize: 13 }}>点击"运行检查"开始系统诊断</div>
-        </div>
-      )}
-
-      {running && (
-        <div style={{
-          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: 12, color: '#94a3b8',
-        }}>
-          <div style={{ fontSize: 36, animation: 'spin 1s linear infinite' }}>⚙️</div>
-          <div style={{ fontSize: 13 }}>正在运行健康检查…</div>
+            <div style={{ fontSize: 14, color: COLORS.textDim }}>/ 100</div>
+          </div>
+          {diagResult.issues && diagResult.issues.length > 0 && (
+            <div>
+              <div style={S.sectionLabel}>⚠️ 问题列表</div>
+              {diagResult.issues.map((item, i) => (
+                <div key={i} style={S.listItem('issue')}>
+                  {item}
+                </div>
+              ))}
+            </div>
+          )}
+          {diagResult.passed && diagResult.passed.length > 0 && (
+            <div>
+              <div style={S.sectionLabel}>✅ 通过项目</div>
+              {diagResult.passed.map((item, i) => (
+                <div key={i} style={S.listItem('passed')}>
+                  {item}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
-  )
+  );
+
+  const tabs = [
+    { key: 'auto', label: '自主模式' },
+    { key: 'chat', label: '对话' },
+    { key: 'diagnose', label: '快速诊断' },
+  ];
+
+  return (
+    <div style={S.panel}>
+      <div style={S.header}>
+        <h2 style={S.title}>🩺 Doctor Agent</h2>
+        <div style={S.subtitle}>设备接入工程师</div>
+      </div>
+      <div style={S.tabs}>
+        {tabs.map((t) => (
+          <button key={t.key} style={S.tab(tab === t.key)} onClick={() => setTab(t.key)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {tab === 'auto' && renderAuto()}
+        {tab === 'chat' && renderChat()}
+        {tab === 'diagnose' && renderDiagnose()}
+      </div>
+    </div>
+  );
 }
+
+export default DoctorPanel;

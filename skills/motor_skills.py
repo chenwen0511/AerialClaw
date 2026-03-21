@@ -120,7 +120,11 @@ class Land(Skill):
         
         result = adapter.land()
         gps = adapter.get_gps()
-        pos = [gps.lat, gps.lon, gps.alt]
+        if gps is not None:
+            pos = [gps.lat, gps.lon, gps.alt]
+        else:
+            ned = adapter.get_position()
+            pos = [ned.north, ned.east, ned.down] if ned else [0, 0, 0]
         
         return SkillResult(
             success=result.success,
@@ -297,8 +301,13 @@ class GetPosition(Skill):
         gps = adapter.get_gps()
         ned = adapter.get_position()
         elapsed = round(time.time() - start, 2)
-        
-        gps_d = {"lat": round(gps.lat, 7), "lon": round(gps.lon, 7), "alt": round(gps.alt, 2)}
+
+        if ned is None:
+            return SkillResult(success=False, error_msg="无法获取位置数据")
+
+        gps_d = None
+        if gps is not None:
+            gps_d = {"lat": round(gps.lat, 7), "lon": round(gps.lon, 7), "alt": round(gps.alt, 2)}
         ned_l = [round(ned.north, 2), round(ned.east, 2), round(ned.down, 2)]
         
         return SkillResult(

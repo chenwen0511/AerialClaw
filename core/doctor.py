@@ -125,6 +125,7 @@ class HealthReport:
 
         cat_labels = {
             "connection": "🔌 连接状态",
+            "adapter": "🔗 适配器 & 硬技能",
             "sensor": "🎯 传感器健康",
             "ai": "🧠 AI 系统",
             "config": "📋 配置审计",
@@ -190,6 +191,10 @@ def create_doctor() -> Doctor:
     from core.doctor_checks.config import (
         EnvConfigCheck, SkillDocsCheck, ProfileCheck, DiskSpaceCheck
     )
+    from core.doctor_checks.adapter_check import (
+        AdapterStatusCheck, AdapterStateCheck, HardSkillCheck,
+        AirSimConnectionCheck,
+    )
 
     doctor = Doctor()
     # 连接
@@ -197,6 +202,11 @@ def create_doctor() -> Doctor:
     doctor.register(VLMConnectionCheck())
     doctor.register(MAVSDKCheck())
     doctor.register(PX4Check())
+    doctor.register(AirSimConnectionCheck())
+    # 适配器 & 硬技能
+    doctor.register(AdapterStatusCheck())
+    doctor.register(AdapterStateCheck())
+    doctor.register(HardSkillCheck())
     # 传感器
     doctor.register(CameraCheck())
     doctor.register(LidarCheck())
