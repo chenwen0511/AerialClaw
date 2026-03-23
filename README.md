@@ -154,6 +154,12 @@ Currently implemented in an **AirSim + OpenFly** simulation environment (Shangha
   <em>Autonomous city patrol: 3-landmark inspection, real-time map update, AI report generation (AirSim Shanghai scene)</em>
 </p>
 
+<p align="center">
+  <img src="assets/gazebo_demo.gif" alt="Flying Through Urban Skyscrapers" width="720" />
+  <br>
+  <em>Drone navigating through high-rise buildings, automatically climbing to safe altitude to avoid skyscrapers</em>
+</p>
+
 | Component | Technical Choice |
 |-----------|------------------|
 | Flight Control System | AirSim SimpleFlight (API-based control) |

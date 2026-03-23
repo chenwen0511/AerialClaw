@@ -147,23 +147,30 @@
 
 ## 仿真验证环境
 
-目前已在 **PX4 SITL + Gazebo Harmonic** 仿真环境中构建验证平台：
+目前已在 **AirSim + OpenFly** 仿真环境（上海城市场景）中构建验证平台：
 
 <p align="center">
-  <img src="assets/gazebo_demo.gif" alt="Gazebo 仿真" width="720" />
+  <img src="assets/demo.gif" alt="AirSim 城市巡检演示" width="720" />
   <br>
-  <em>X500无人机在城市救援场景中的仿真测试（4倍速播放）</em>
+  <em>自主城市巡检：3处地标依次巡航，实时地图更新，AI报告生成（AirSim 上海城市场景）</em>
+</p>
+
+<p align="center">
+  <img src="assets/gazebo_demo.gif" alt="城市高楼间飞行" width="720" />
+  <br>
+  <em>无人机穿越城市高楼群，自动提升至安全高度规避超高层建筑</em>
 </p>
 
 | 组件 | 技术选型 |
 |------|----------|
-| 飞控系统 | PX4 v1.15 软件在环仿真 |
-| 仿真环境 | Gazebo Harmonic (gz sim 8.x) |
-| 传感器模型 | 5路摄像头 + 3D LiDAR (360°×16层) |
-| 通信协议 | Micro XRCE-DDS + MAVSDK gRPC |
-| 坐标系 | NED (北-东-地) 局部坐标系 |
+| 飞控系统 | AirSim SimpleFlight（API 控制） |
+| 仿真环境 | Unreal Engine 4 + OpenFly AirSim（上海城市场景） |
+| 传感器模型 | 前向摄像头 + 模拟 LiDAR（360°） |
+| 大模型 / 视觉模型 | GPT-4o（规划、感知、报告生成） |
+| 通信协议 | AirSim RPC（纯 Socket msgpack） |
+| 坐标系 | NED（北-东-地）局部坐标系 |
 
-**仿真场景要素**：倒塌建筑、被困人员模型、火灾烟雾效果、障碍物布置、地面标记等。
+**仿真场景要素**：高层商业区、中层住宅楼群、低层建筑、城市道路、空旷起降区。
 
 ## Web监控界面
 
