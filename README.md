@@ -159,10 +159,11 @@ Currently implemented in an **AirSim + OpenFly** simulation environment (Shangha
 | Flight Control System | AirSim SimpleFlight (API-based control) |
 | Simulation Environment | Unreal Engine 4 + OpenFly AirSim (Shanghai urban scene) |
 | Sensor Models | Front camera + simulated LiDAR (360°) |
+| LLM / VLM | GPT-4o (planning, perception, report generation) |
 | Communication Protocol | AirSim RPC (pure-socket msgpack) |
 | Coordinate System | NED (North-East-Down) local coordinate system |
 
-**Simulation Scene Elements**: High-rise commercial district, mid-rise buildings, low-rise residential blocks, wide roads, open areas for takeoff/landing.
+**Simulation Scene Elements**: High-rise commercial district, mid-rise residential blocks, low-rise buildings, urban roads, open areas for takeoff/landing.
 
 ## Web Monitoring Interface
 
