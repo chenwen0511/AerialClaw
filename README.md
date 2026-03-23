@@ -149,9 +149,9 @@ This design supports research across various application scenarios:
 Currently implemented in a **PX4 SITL + Gazebo Harmonic** simulation environment:
 
 <p align="center">
-  <img src="assets/gazebo_demo.gif" alt="Gazebo Simulation" width="720" />
+  <img src="assets/demo.gif" alt="AirSim City Patrol Demo" width="720" />
   <br>
-  <em>Simulation testing of X500 drone in urban rescue scenario (4x speed playback)</em>
+  <em>Autonomous city patrol: 3-landmark inspection, real-time map update, AI report generation (AirSim Shanghai scene)</em>
 </p>
 
 | Component | Technical Choice |
