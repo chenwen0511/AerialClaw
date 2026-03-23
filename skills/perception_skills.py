@@ -565,17 +565,38 @@ class Observe(Skill):
 
         direction = mapped
 
-        # 1. 从 Gazebo 抓图
+        # 1. 抓图：优先 adapter（AirSim base64→bytes），fallback Gazebo（numpy BGR）
+        image = None
+        adapter = _get_adapter()
+
+        # 路径 A: AirSim adapter — 返回 base64 JPEG，decode 成 bytes 直接给 VLM
         try:
-            from perception.gz_camera import get_camera, init_camera
-            camera = get_camera()
-            if camera is None:
-                camera = init_camera()
-            image = camera.capture(direction)
+            if adapter and hasattr(adapter, 'get_image_base64'):
+                import base64 as b64mod
+                b64_str = adapter.get_image_base64()
+                if b64_str:
+                    image = b64mod.b64decode(b64_str)  # bytes, VLM analyzer 直接支持
+                    logger.debug("通过 adapter.get_image_base64 抓图成功 (%d bytes)", len(image))
         except Exception as e:
+            logger.warning("adapter 抓图失败: %s, 尝试 Gazebo 路径", e)
+
+        # 路径 B: Gazebo gz_camera — 返回 numpy BGR
+        if image is None:
+            try:
+                from perception.gz_camera import get_camera, init_camera
+                camera = get_camera()
+                if camera is None:
+                    camera = init_camera()
+                image = camera.capture(direction)
+            except ImportError:
+                logger.warning("gz 模块不可用, 跳过 Gazebo 相机路径")
+            except Exception as e:
+                logger.warning("Gazebo 相机抓图失败: %s", e)
+
+        if image is None:
             return SkillResult(
                 success=False,
-                error_msg=f"相机抓图失败: {e}",
+                error_msg=f"相机抓图失败: adapter 和 Gazebo 均不可用",
                 cost_time=round(time.time() - start, 2),
             )
 
@@ -674,13 +695,30 @@ class Observe(Skill):
             )
 
     def _observe_all(self, focus: str, start: float) -> SkillResult:
-        """拍所有方向并拼接描述。"""
-        from perception.gz_camera import get_camera, init_camera
+        """拍所有方向并拼接描述。优先 adapter（仅前向），fallback Gazebo（多方向）。"""
         from perception.vlm_analyzer import get_analyzer, init_analyzer
 
-        camera = get_camera()
-        if camera is None:
-            camera = init_camera()
+        # 尝试 Gazebo 多方向相机
+        gz_camera = None
+        try:
+            from perception.gz_camera import get_camera, init_camera
+            gz_camera = get_camera()
+            if gz_camera is None:
+                gz_camera = init_camera()
+        except ImportError:
+            pass
+
+        # adapter fallback（仅支持前向）
+        adapter = _get_adapter()
+        has_adapter_cam = adapter and hasattr(adapter, 'get_image_base64')
+
+        if gz_camera is None and not has_adapter_cam:
+            return SkillResult(
+                success=False,
+                error_msg="相机不可用: gz 模块未安装且 adapter 无相机接口",
+                cost_time=round(time.time() - start, 2),
+            )
+
         analyzer = get_analyzer()
         if analyzer is None:
             analyzer = init_analyzer()
@@ -702,7 +740,19 @@ class Observe(Skill):
 
         for d in ["front", "left", "right", "rear", "down"]:
             try:
-                image = camera.capture(d)
+                image = None
+                # 优先 Gazebo 多方向
+                if gz_camera is not None:
+                    image = gz_camera.capture(d)
+                # fallback: adapter 只有前向
+                if image is None and has_adapter_cam and d == "front":
+                    try:
+                        import base64 as b64mod
+                        b64_str = adapter.get_image_base64()
+                        if b64_str:
+                            image = b64mod.b64decode(b64_str)
+                    except Exception:
+                        pass
                 if image is None:
                     all_descs.append(f"[{dir_cn[d]}] 未获取到图像")
                     continue

@@ -112,7 +112,8 @@ class Land(Skill):
 
     def execute(self, input_data: dict) -> SkillResult:
         if not _check_in_air():
-            return SkillResult(success=False, error_msg="无人机不在空中，无法降落", logs=["❌ 前提检查失败: 不在空中"])
+            return SkillResult(success=True, output={"landed_position": [], "land_time": 0.0},
+                               cost_time=0.0, logs=["✅ 无人机已在地面，无需降落"])
 
         adapter = _get_adapter()
         if adapter is None:
@@ -120,15 +121,13 @@ class Land(Skill):
         
         result = adapter.land()
         gps = adapter.get_gps()
-        if gps is not None:
-            pos = [gps.lat, gps.lon, gps.alt]
-        else:
-            ned = adapter.get_position()
-            pos = [ned.north, ned.east, ned.down] if ned else [0, 0, 0]
-        
+        ned = adapter.get_position()
+        pos = [round(gps.lat,7), round(gps.lon,7), round(gps.alt,2)] if gps else None
+        ned_l = [round(ned.north,2), round(ned.east,2), round(ned.down,2)] if ned else None
+
         return SkillResult(
             success=result.success,
-            output={"landed_position": pos, "land_time": result.duration},
+            output={"landed_position": pos, "ned": ned_l, "land_time": result.duration},
             error_msg=result.message if not result.success else "",
             cost_time=result.duration,
             logs=[f"land: {result.message} [{adapter.name}]"],
@@ -174,6 +173,12 @@ class FlyTo(Skill):
             return SkillResult(success=False, error_msg="无仿真适配器")
         
         n, e, d = float(target[0]), float(target[1]), float(target[2])
+        # 安全修正: LLM 经常把高度写成正数 (如 10 表示 10m高)
+        # NED 里 down 负值 = 向上, 正值 = 向下(地下)
+        # 无人机不可能往地下飞, 如果 d > 0 说明 LLM 想表达的是高度, 自动取反
+        if d > 0:
+            logger.warning(f"fly_to: down={d} > 0 (地下), 自动修正为 down={-d} (高度{d}m)")
+            d = -d
         result = adapter.fly_to_ned(n, e, d, speed)
         
         final = result.data.get("position", target)
@@ -301,13 +306,8 @@ class GetPosition(Skill):
         gps = adapter.get_gps()
         ned = adapter.get_position()
         elapsed = round(time.time() - start, 2)
-
-        if ned is None:
-            return SkillResult(success=False, error_msg="无法获取位置数据")
-
-        gps_d = None
-        if gps is not None:
-            gps_d = {"lat": round(gps.lat, 7), "lon": round(gps.lon, 7), "alt": round(gps.alt, 2)}
+        
+        gps_d = {"lat": round(gps.lat, 7), "lon": round(gps.lon, 7), "alt": round(gps.alt, 2)} if gps else None
         ned_l = [round(ned.north, 2), round(ned.east, 2), round(ned.down, 2)]
         
         return SkillResult(
@@ -358,7 +358,7 @@ class GetBattery(Skill):
 
 class ReturnToLaunch(Skill):
     name = "return_to_launch"
-    description = "无人机返回起飞位置并降落。"
+    description = "无人机返回起飞位置并自动降落。调用后无人机会在地面, 不需要再额外调用 land。"
     skill_type = "hard"
     robot_type = ["UAV"]
     preconditions = ["battery > 10%", "robot_type == UAV"]
@@ -688,3 +688,79 @@ class GetMarks(Skill):
             logs=[f"共 {len(marks)} 个标记点"],
         )
 
+
+class Observe(Skill):
+    """相机观察技能：通过 AirSim adapter 抓取前向摄像头图像（base64 JPEG）。
+    
+    不依赖 Gazebo gz 模块，直接调用 SimAdapter.get_image_base64()。
+    适用于 AirSim / OpenFly 仿真环境。
+    """
+
+    name = "observe"
+    description = "抓取无人机前向摄像头图像，返回 base64 编码的 JPEG 图像。用于视觉感知和目标识别。"
+    skill_type = "hard"
+    robot_type = ["UAV"]
+    preconditions = ["battery > 10%", "camera_sensor == operational"]
+    cost = 1.5
+    input_schema = {
+        "camera_name": "str，摄像头名称，默认 'front_custom'（可选）",
+    }
+    output_schema = {
+        "image_base64": "str，base64 编码的 JPEG 图像，失败时为 None",
+        "has_image": "bool，是否成功获取图像",
+        "source": "str，图像来源（airsim / mock）",
+    }
+
+    def check_precondition(self, robot_state: dict) -> bool:
+        return robot_state.get("battery", 100) > 10
+
+    def execute(self, input_data: dict) -> SkillResult:
+        import time
+        start = time.time()
+
+        adapter = _get_adapter()
+        if adapter is None:
+            return SkillResult(
+                success=False,
+                error_msg="无仿真适配器",
+                logs=["❌ observe: 无适配器连接"],
+            )
+
+        # 尝试调用 adapter 的 get_image_base64 方法
+        image_b64 = None
+        source = "mock"
+
+        if hasattr(adapter, "get_image_base64"):
+            try:
+                image_b64 = adapter.get_image_base64()
+                if image_b64:
+                    source = "airsim"
+            except Exception as e:
+                logger.warning(f"observe: get_image_base64 失败: {e}")
+
+        elapsed = round(time.time() - start, 3)
+        has_image = image_b64 is not None
+
+        if has_image:
+            return SkillResult(
+                success=True,
+                output={
+                    "image_base64": image_b64,
+                    "has_image": True,
+                    "source": source,
+                },
+                cost_time=elapsed,
+                logs=[f"✅ observe: 图像获取成功 ({source}), 耗时 {elapsed}s"],
+            )
+        else:
+            # 无图像但不报错——返回 has_image=False，让 Brain 决策
+            return SkillResult(
+                success=True,
+                output={
+                    "image_base64": None,
+                    "has_image": False,
+                    "source": "none",
+                },
+                cost_time=elapsed,
+                logs=[f"⚠️ observe: 未获取到图像（adapter={adapter.name}），耗时 {elapsed}s"],
+            )

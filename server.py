@@ -21,13 +21,14 @@ import json
 import time
 import base64
 import threading
+# from core.adapter_doctor_v2 import start_autonomous_doctor_v2  # replaced by doctor.agent
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify, request, send_from_directory, send_file
+from flask import Flask, Response, jsonify, request, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
@@ -130,6 +131,7 @@ def _build_robot_registry(robot_id: str, robot_type: str):
     )
     from skills.cognitive_skills import (
         RunPython, HttpRequest, ReadFile, WriteFile,
+        Report, Alert, AskUser, UpdateMap,
     )
 
     # 全量技能工厂（每次都 new 出新实例，避免共享状态）
@@ -141,6 +143,8 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe,
         # 认知技能（信息层）
         RunPython, HttpRequest, ReadFile, WriteFile,
+        # 通信技能（主动交互）
+        Report, Alert, AskUser, UpdateMap,
     ]
 
     reg = SkillRegistry(auto_generate_doc=False)
@@ -218,6 +222,7 @@ def _do_init():
         )
 
         state.initialized = True
+
         state.push_log("success", "✅ 系统初始化完成，等待设备接入")
         state.push_log("info", "💡 仿真设备: cd simulator && python sim_client.py")
 
@@ -261,9 +266,30 @@ def _try_connect_adapter():
             adapter = get_adapter()
             if ok:
                 state.push_log("success", f"✅ Adapter connected: {adapter.name}")
+                # Adapter 合规检查 + 自动修复
+                try:
+                    from doctor.tools.diagnose import execute as doctor_diagnose
+                    diag_result = doctor_diagnose()
+                    heal_result = diag_result  # Doctor Agent handles healing
+                    if diag_result.get("score", 0) >= 100:
+                        state.push_log("info", f"🔧 {heal_result['summary']}")
+                    elif heal_result.get("issues"):
+                        n = len(heal_result["issues"])
+                        state.push_log("warn", f"⚠️ Adapter 合规: {n} 个问题待处理")
+                        for iss in heal_result["issues"][:3]:
+                            state.push_log("warn", f"  → {iss['name']}: {iss['message']}")
+                    else:
+                        logger.info("🩺 Adapter 合规检查通过"); state.push_log("info", "🩺 Adapter 合规检查通过")
+                except Exception as heal_err:
+                    logger.warning(f"Adapter 自检跳过: {heal_err}")
             else:
                 state.push_log("warn", f"Adapter degraded to: {adapter.name}")
             _start_telemetry_sync()
+
+            # AirSim 模式下启动摄像头流推送
+            if sim_adapter == "airsim" and ok:
+                _start_airsim_camera_stream()
+
         except Exception as e:
             state.push_log("warn", f"Adapter unavailable: {e}, running in mock mode")
 
@@ -281,7 +307,7 @@ def _start_telemetry_sync():
         while state.initialized:
             try:
                 adapter = get_adapter()
-                if adapter and not adapter.is_connected():
+                if adapter and not adapter.is_connected:
                     # mavsdk_server 可能崩了，尝试自动重连
                     _reconnect_attempts += 1
                     wait = min(5 * _reconnect_attempts, _MAX_RECONNECT_INTERVAL)
@@ -295,7 +321,7 @@ def _start_telemetry_sync():
                         state.push_log("success", "✅ MAVSDK 自动重连成功")
                         _reconnect_attempts = 0
                     continue
-                if adapter and adapter.is_connected():
+                if adapter and adapter.is_connected:
                     _reconnect_attempts = 0
                     st = adapter.get_state()
                     update = {"robots": {"UAV_1": {}}}
@@ -330,6 +356,172 @@ def _start_telemetry_sync():
     t = threading.Thread(target=_sync_loop, daemon=True, name="telemetry-sync")
     t.start()
     state.push_log("info", "遥测同步线程已启动（1Hz 刷新位置/电量/状态）")
+
+
+def _start_airsim_camera_stream():
+    """AirSim 模式下的摄像头流推送线程。
+    通过 AirSim RPC 获取多摄像头图像，emit 到前端 WebSocket。
+    格式与 Gazebo sensor_cameras 事件完全一致，前端无需修改。
+    """
+    import base64 as b64mod
+
+    # AirSim 摄像头 ID → 前端方位名映射 (settings.json 已配好 5 个方向)
+    AIRSIM_CAMERAS = {
+        "cam_front": "front",
+        "cam_right": "right",
+        "cam_left": "left",
+        "cam_rear": "rear",
+        "cam_down": "down",
+    }
+
+    def _airsim_stream_loop():
+        from adapters.adapter_manager import get_adapter
+        import cv2
+        import numpy as np
+
+        logger.info("AirSim 摄像头流推送线程启动")
+        fail_count = 0
+
+        while state.initialized:
+            try:
+                adapter = get_adapter()
+                if not adapter or not getattr(adapter, '_connected', False):
+                    time.sleep(1)
+                    continue
+
+                rpc_client = getattr(adapter, '_client', None)
+                if not rpc_client:
+                    time.sleep(1)
+                    continue
+
+                cameras_payload = {}
+                vehicle = getattr(adapter, '_vehicle_name', '')
+
+                for cam_id, direction in AIRSIM_CAMERAS.items():
+                    try:
+                        responses = rpc_client.sim_get_images([{
+                            "camera_name": cam_id,
+                            "image_type": 0,
+                            "pixels_as_float": False,
+                            "compress": False,
+                        }], vehicle_name=vehicle)
+
+                        if responses:
+                            r = responses[0]
+                            h = r.get("height", 0)
+                            w = r.get("width", 0)
+                            data = r.get("image_data_uint8") or r.get("image_data", b"")
+                            if isinstance(data, str):
+                                data = b64mod.b64decode(data)
+                            if h > 0 and w > 0 and data and len(data) >= h * w * 3:
+                                img = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3)
+                                _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 40])
+                                cameras_payload[direction] = {
+                                    "image": b64mod.b64encode(buf.tobytes()).decode("ascii"),
+                                    "width": w,
+                                    "height": h,
+                                    "fps": 5.0,
+                                }
+                    except Exception:
+                        pass  # 个别摄像头失败不影响其他
+
+                if cameras_payload:
+                    socketio.emit("sensor_cameras", cameras_payload)
+                    if "front" in cameras_payload:
+                        socketio.emit("sensor_camera", cameras_payload["front"])
+                    fail_count = 0
+                else:
+                    fail_count += 1
+                    if fail_count == 1:
+                        logger.warning("AirSim 摄像头无数据（可能摄像头 ID 不匹配或场景未加载）")
+
+            except Exception as e:
+                logger.debug(f"AirSim 摄像头流异常: {e}")
+
+            # ── AirSim 深度图模拟 LiDAR（每5帧一次） ──
+            _lidar_counter = getattr(_airsim_stream_loop, "_lc", 0) + 1
+            _airsim_stream_loop._lc = _lidar_counter
+            if _lidar_counter % 5 != 0:
+                time.sleep(0.1)
+                continue
+            try:
+                import math
+                # 从 4 个水平方向摄像头获取深度图，拼成 360° 扫描
+                depth_cameras = {"0": 0, "1": 90, "2": -90, "3": 180}  # cam_id -> yaw_degrees
+                max_range = 100.0
+                num_bins = 360
+                ranges = [max_range] * num_bins
+
+                for cam_id, yaw_deg in depth_cameras.items():
+                    try:
+                        depth_resp = rpc_client.sim_get_images([{
+                            "camera_name": cam_id,
+                            "image_type": 2,  # DepthPerspective
+                            "pixels_as_float": True,
+                            "compress": False,
+                        }], vehicle_name=vehicle)
+                        if not depth_resp:
+                            continue
+                        dr = depth_resp[0]
+                        dh = dr.get("height", 0)
+                        dw = dr.get("width", 0)
+                        depth_data = dr.get("image_data_float") or dr.get("image_data_uint8") or []
+                        if not depth_data or dh == 0 or dw == 0:
+                            continue
+
+                        if isinstance(depth_data, (list,)):
+                            depth_arr = depth_data
+                        else:
+                            import struct
+                            depth_arr = list(struct.unpack(f'{len(depth_data)//4}f', depth_data))
+
+                        # 取中间行（水平扫描线）
+                        mid_row = dh // 2
+                        row_start = mid_row * dw
+                        row_end = row_start + dw
+                        if row_end <= len(depth_arr):
+                            row_depths = depth_arr[row_start:row_end]
+                            fov = 90.0  # degrees
+                            for col_idx, depth in enumerate(row_depths):
+                                if depth <= 0 or depth >= max_range:
+                                    continue
+                                # 像素列 -> 水平角度偏移
+                                col_frac = (col_idx - dw / 2) / (dw / 2)  # -1 to 1
+                                angle_offset = col_frac * (fov / 2)
+                                angle_deg = yaw_deg + angle_offset
+                                angle_deg = angle_deg % 360
+                                bin_idx = int(angle_deg) % num_bins
+                                # depth 是沿光线的距离，转水平距离
+                                h_dist = depth * math.cos(math.radians(angle_offset))
+                                if h_dist < ranges[bin_idx]:
+                                    ranges[bin_idx] = round(h_dist, 2)
+                    except Exception:
+                        pass
+
+                clean_ranges = [r if r < max_range else max_range for r in ranges]
+                socketio.emit("sensor_lidar", {
+                    "is_3d": False,
+                    "ranges": clean_ranges,
+                    "angle_min": -math.pi,
+                    "angle_max": math.pi,
+                    "angle_increment": 2 * math.pi / num_bins,
+                    "range_min": 0.1,
+                    "range_max": max_range,
+                    "count": num_bins,
+                    "fps": 5.0,
+                })
+                if fail_count == 0:
+                    non_max = sum(1 for r in clean_ranges if r < max_range)
+                    logger.info(f"📡 AirSim LiDAR 首次推送成功: {non_max}/{num_bins} bins 有数据")
+            except Exception as lidar_e:
+                if fail_count < 2:
+                    logger.warning(f"AirSim 深度图 LiDAR 模拟失败: {lidar_e}")
+
+            time.sleep(0.05)  # ~20 FPS target (limited by RPC latency)
+
+    t = threading.Thread(target=_airsim_stream_loop, daemon=True, name="airsim-camera-stream")
+    t.start()
+    state.push_log("info", "📷 AirSim 摄像头流推送已启动 (~5 FPS)")
 
 
 def _start_sensor_bridge():
@@ -465,7 +657,7 @@ def _start_sensor_stream():
                 for d in DIRECTIONS:
                     img = bridge.get_camera_image(d)
                     if img is not None:
-                        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 50])
+                        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 40])
                         b64 = base64.b64encode(buf.tobytes()).decode("ascii")
                         info = bridge.get_camera_info(d)
                         cameras_payload[d] = {
@@ -921,16 +1113,27 @@ def api_sensor_status():
 
 @app.route("/api/sensor/camera", methods=["GET"])
 def api_sensor_camera():
-    """返回最新一帧相机 JPEG 图像。"""
-    if not state.sensor_bridge:
-        return jsonify({"error": "传感器桥接未启动"}), 503
-    img = state.sensor_bridge.get_camera_image()
-    if img is None:
-        return jsonify({"error": "暂无相机数据"}), 503
+    """获取摄像头图像（支持 Gazebo 和 AirSim）。"""
     import cv2
-    _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    from flask import Response
-    return Response(buf.tobytes(), mimetype="image/jpeg")
+    import io
+    # 优先用 Gazebo sensor bridge
+    if state.sensor_bridge:
+        img = state.sensor_bridge.get_camera_image()
+        if img is not None:
+            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return Response(buf.tobytes(), mimetype="image/jpeg")
+    # 回退到 AirSim adapter
+    from adapters.adapter_manager import get_adapter
+    adapter = get_adapter()
+    if adapter and hasattr(adapter, 'get_image_base64'):
+        import base64
+        b64 = adapter.get_image_base64()
+        if b64:
+            return Response(base64.b64decode(b64), mimetype="image/jpeg")
+    return Response("No camera available", status=503)
+
+
+
 
 
 @app.route("/api/sensor/lidar", methods=["GET"])
@@ -1249,6 +1452,12 @@ def on_ai_task(data):
                 "agent_iterations": summary["iterations"],
             })
 
+            # 生成 HTML 巡检报告
+            try:
+                _generate_patrol_report(task, summary, final_result, ok)
+            except Exception as rpt_e:
+                logger.warning(f"报告生成失败: {rpt_e}")
+
         except Exception as e:
             logger.exception("AI 任务执行异常")
             state.push_log("error", f"AI 任务异常: {e}")
@@ -1379,11 +1588,119 @@ def on_ai_chat(data):
     t.start()
 
 
+
+
+def _generate_patrol_report(task, summary, final_result, success):
+    """生成 HTML 巡检报告，保存到 static/reports/ 并通知前端。"""
+    import datetime, os, html as html_mod
+    from skills.cognitive_skills import Report
+
+    reports = Report._reports.copy()
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_dir = os.path.join(_BASE_DIR, "ui", "dist", "reports")
+    os.makedirs(report_dir, exist_ok=True)
+    filename = f"patrol_report_{ts}.html"
+    filepath = os.path.join(report_dir, filename)
+
+    total_time = sum(h.get("cost_time", 0) for h in summary["history"])
+    steps = summary["history"]
+    iterations = summary["iterations"]
+
+    # 构建 HTML
+    h = []
+    h.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
+    h.append("<title>AerialClaw 巡检报告</title>")
+    h.append("<style>")
+    h.append("body{font-family:'Segoe UI',sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#0d1117;color:#c9d1d9}")
+    h.append("h1{color:#58a6ff;border-bottom:2px solid #21262d;padding-bottom:12px}")
+    h.append("h2{color:#79c0ff;margin-top:30px}")
+    h.append(".meta{background:#161b22;padding:15px;border-radius:8px;margin:15px 0;border:1px solid #21262d}")
+    h.append(".meta span{display:inline-block;margin-right:25px;color:#8b949e}")
+    h.append(".meta b{color:#c9d1d9}")
+    h.append(".report-card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:15px;margin:10px 0}")
+    h.append(".report-card.warning{border-left:4px solid #d29922}")
+    h.append(".report-card.danger{border-left:4px solid #f85149}")
+    h.append(".report-card.info{border-left:4px solid #58a6ff}")
+    h.append(".badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600}")
+    h.append(".badge.ok{background:#238636;color:#fff} .badge.fail{background:#da3633;color:#fff}")
+    h.append(".badge.info{background:#1f6feb;color:#fff} .badge.warning{background:#9e6a03;color:#fff}")
+    h.append("table{width:100%;border-collapse:collapse;margin:15px 0}")
+    h.append("th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #21262d}")
+    h.append("th{color:#8b949e;font-weight:600}")
+    h.append(".footer{text-align:center;color:#484f58;margin-top:40px;font-size:12px}")
+    h.append("</style></head><body>")
+
+    status = "✅ 任务完成" if success else "❌ 任务未完成"
+    h.append(f"<h1>🚁 AerialClaw 巡检报告</h1>")
+    h.append(f"<div class='meta'>")
+    h.append(f"<span>状态: <b>{status}</b></span>")
+    h.append(f"<span>时间: <b>{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}</b></span>")
+    h.append(f"<span>耗时: <b>{total_time:.1f}s</b></span>")
+    h.append(f"<span>执行步骤: <b>{summary['successful']}/{summary['total_actions']}</b></span>")
+    h.append(f"<span>AI 决策轮数: <b>{iterations}</b></span>")
+    h.append(f"</div>")
+
+    h.append(f"<h2>📋 任务目标</h2>")
+    h.append(f"<div class='report-card info'>{html_mod.escape(task)}</div>")
+
+    # AI 总结
+    if final_result.get("summary"):
+        h.append(f"<h2>🧠 AI 总结</h2>")
+        h.append(f"<div class='report-card info'>{html_mod.escape(final_result['summary'])}</div>")
+
+    # 巡检发现
+    if reports:
+        h.append(f"<h2>🔍 巡检发现 ({len(reports)} 条)</h2>")
+        for r in reports:
+            sev = r.get("severity", "info")
+            icon = {"info": "📋", "warning": "⚠️", "danger": "🚨"}.get(sev, "📋")
+            h.append(f"<div class='report-card {sev}'>")
+            h.append(f"<span class='badge {sev}'>{sev.upper()}</span> ")
+            h.append(f"<b>{icon} #{r.get('id','')} [{r.get('time','')}] {r.get('position','')}</b><br>")
+            h.append(f"{html_mod.escape(r.get('content', ''))}")
+            h.append(f"</div>")
+
+    # 执行明细
+    h.append(f"<h2>⚙️ 执行明细</h2>")
+    h.append(f"<table><tr><th>#</th><th>技能</th><th>结果</th><th>耗时</th></tr>")
+    for i, s in enumerate(steps, 1):
+        badge = "<span class='badge ok'>OK</span>" if s["success"] else f"<span class='badge fail'>FAIL</span>"
+        h.append(f"<tr><td>{i}</td><td>{s['skill']}</td><td>{badge}</td><td>{s.get('cost_time',0):.1f}s</td></tr>")
+    h.append("</table>")
+
+    h.append(f"<div class='footer'>Generated by AerialClaw v2.0 — Autonomous UAV Framework</div>")
+    h.append("</body></html>")
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("\n".join(h))
+
+    report_url = f"/reports/{filename}"
+    logger.info(f"📊 巡检报告已生成: {report_url}")
+
+    socketio.emit("ai_chat_reply", {
+        "ok": True,
+        "reply": f"📊 **巡检报告已生成！** [点击查看]({report_url})",
+        "intent": "final_report",
+        "report_url": report_url,
+    })
+
+
 def _run_agent_loop(goal, sid):
     """
     启动自主 Agent 循环。观察→思考→行动→反思, 直到目标达成。
     """
     if state.is_executing:
+        # 先检查是否是对 ask_user 的回答
+        from skills.cognitive_skills import AskUser
+        if AskUser._answer_event and not AskUser._answer_event.is_set():
+            AskUser.receive_answer(goal)
+            socketio.emit("ai_chat_reply", {
+                "ok": True, "intent": "ANSWER",
+                "reply": f"✅ 已收到你的回答: \"{goal[:80]}\"",
+                "message": goal,
+            }, to=sid)
+            return
+
         # 任务执行中, 注入用户消息到 AgentLoop
         if state._current_agent_loop:
             state._current_agent_loop.inject_user_message(goal)
@@ -1648,7 +1965,7 @@ def on_stop_execution():
             try:
                 from adapters.adapter_manager import get_adapter
                 adapter = get_adapter()
-                if adapter and adapter.is_connected() and adapter.is_in_air():
+                if adapter and adapter.is_connected and adapter.is_in_air():
                     result = adapter.hover(2.0)
                     state.push_log("info", f"🔄 悬停中: {result.message}")
                 else:
@@ -1675,7 +1992,7 @@ def on_velocity_control(data):
 
     from adapters.adapter_manager import get_adapter
     adapter = get_adapter()
-    if not adapter or not adapter.is_connected():
+    if not adapter or not adapter.is_connected:
         emit("velocity_result", {"ok": False, "error": "适配器未连接"})
         return
 
@@ -1700,7 +2017,7 @@ def on_get_telemetry():
         return
     from adapters.adapter_manager import get_adapter
     adapter = get_adapter()
-    if not adapter or not adapter.is_connected():
+    if not adapter or not adapter.is_connected:
         emit("telemetry", {})
         return
     try:
@@ -1815,6 +2132,8 @@ def on_register_robot(data):
 #  世界状态定时推送（每 2 秒广播一次）
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+
 def _world_state_broadcaster():
     while True:
         time.sleep(2)
@@ -1824,28 +2143,223 @@ def _world_state_broadcaster():
 
 # ── Doctor API ────────────────────────────────────────────────────────────────
 
-@app.route("/api/doctor/run", methods=["GET"])
+
+# ── Doctor Agent API ──────────────────────────────────────────────────────────
+# 统一的设备接入工程师 API，替代旧的 health-agent / adapter-doctor / adapter-healer
+
+_doctor_task = None  # 当前运行的自主模式任务
+
+def _get_doctor():
+    from doctor.agent import get_doctor_agent
+    return get_doctor_agent()
+
+
+@app.route("/api/doctor/run", methods=["POST"])
 def api_doctor_run():
-    """执行系统健康检查，返回报告"""
+    """启动 Doctor 自主模式。"""
+    global _doctor_task
     try:
-        from core.doctor import create_doctor
-        doctor = create_doctor()
-        report = doctor.run()
-        return jsonify(report.to_dict())
+        data = request.get_json(force=True) if request.is_json else {}
+        goal = data.get("goal", "诊断 adapter 并确保硬技能能正常执行")
+
+        agent = _get_doctor()
+        if agent.is_running:
+            return jsonify({"error": "已有任务在运行"}), 400
+
+        import threading
+        task_id = f"doctor_{int(time.time())}"
+        _doctor_task = {"id": task_id, "running": True, "steps": []}
+
+        def _run():
+            try:
+                for step in agent.run(goal):
+                    _doctor_task["steps"].append(step)
+                    socketio.emit("doctor_step", step)
+                    if step.get("done"):
+                        break
+            finally:
+                _doctor_task["running"] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return jsonify({"task_id": task_id, "started": True})
+    except Exception as e:
+        logger.error(f"Doctor run error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/doctor/status", methods=["GET"])
+def api_doctor_status():
+    """查询 Doctor 当前状态。"""
+    if not _doctor_task:
+        return jsonify({"running": False, "steps": []})
+    return jsonify({
+        "task_id": _doctor_task.get("id"),
+        "running": _doctor_task.get("running", False),
+        "steps_count": len(_doctor_task.get("steps", [])),
+        "steps": _doctor_task.get("steps", [])[-10:],  # 最近 10 步
+    })
+
+
+@app.route("/api/doctor/stop", methods=["POST"])
+def api_doctor_stop():
+    """中止 Doctor。"""
+    try:
+        _get_doctor().stop()
+        return jsonify({"stopped": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/doctor/chat", methods=["POST"])
+def api_doctor_chat():
+    """Doctor 对话模式（线程执行，避免长工具调用超时）。"""
+    import threading
+    try:
+        data = request.get_json(force=True)
+        message = data.get("message", "")
+        history = data.get("history", [])
+        if not message:
+            return jsonify({"error": "message required"}), 400
+
+        result_holder = {"done": False, "result": {}, "error": None}
+
+        def _run():
+            try:
+                final = {}
+                for step in _get_doctor().chat(message, history):
+                    # 同时通过 socketio 推送每一步（前端可选监听）
+                    try:
+                        socketio.emit("doctor_chat_step", step)
+                    except Exception:
+                        pass
+                    if step.get("reply"):
+                        final = step
+                result_holder["result"] = final
+            except Exception as e:
+                result_holder["error"] = str(e)
+            finally:
+                result_holder["done"] = True
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=180)  # 最多等 3 分钟
+
+        if not result_holder["done"]:
+            return jsonify({"error": "timeout after 180s", "reply": "执行超时，请通过 WebSocket doctor_chat 事件查看实时进度"}), 504
+        if result_holder["error"]:
+            return jsonify({"error": result_holder["error"], "reply": f"执行出错: {result_holder['error']}"}), 500
+        return jsonify(result_holder["result"])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/doctor/tools", methods=["GET"])
+def api_doctor_tools():
+    """列出 Doctor 可用工具。"""
+    try:
+        agent = _get_doctor()
+        tools = []
+        for name, t in agent._tools.items():
+            tools.append({
+                "name": name,
+                "description": t["definition"]["description"],
+                "parameters": t["definition"].get("parameters", {}),
+            })
+        return jsonify({"tools": tools, "count": len(tools)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@socketio.on("run_doctor")
-def on_run_doctor():
-    """WebSocket 触发健康检查"""
+@app.route("/api/doctor/chat_history", methods=["GET"])
+def api_doctor_chat_history_get():
+    """获取持久化的 Doctor 对话历史。"""
+    return jsonify({"history": _doctor_ui_history})
+
+@app.route("/api/doctor/chat_history", methods=["POST"])
+def api_doctor_chat_history_post():
+    """前端提交新的对话历史（每轮结束后调用）。"""
+    global _doctor_ui_history
+    data = request.get_json() or {}
+    _doctor_ui_history = data.get("history", _doctor_ui_history)
+    return jsonify({"ok": True})
+
+@app.route("/api/doctor/chat_history/clear", methods=["POST"])
+def api_doctor_chat_history_clear():
+    """清空对话历史。"""
+    global _doctor_ui_history
+    _doctor_ui_history = []
+    return jsonify({"ok": True})
+
+@app.route("/api/doctor/diagnose", methods=["GET"])
+def api_doctor_diagnose():
+    """直接运行一次诊断（不走 LLM，快速检查）。"""
     try:
-        from core.doctor import create_doctor
-        doctor = create_doctor()
-        report = doctor.run()
-        emit("doctor_report", report.to_dict())
+        from doctor.tools.diagnose import execute as diagnose_execute
+        result = diagnose_execute()
+        return jsonify(result)
     except Exception as e:
-        emit("doctor_report", {"error": str(e)})
+        return jsonify({"error": str(e)}), 500
+
+
+_doctor_chat_stop = {}  # sid -> bool
+_doctor_ui_history = []  # 持久化 Doctor 对话历史（跨连接）, 用于打断对话
+
+@socketio.on("doctor_chat_stop")
+def on_doctor_chat_stop(data=None):
+    """前端打断 Doctor 对话。"""
+    from flask_socketio import rooms
+    sid = request.sid
+    _doctor_chat_stop[sid] = True
+    emit("doctor_reply", {"reply": "⏹ 已打断", "aborted": True})
+
+@socketio.on("doctor_chat")
+def on_doctor_chat(data):
+    """WebSocket: Doctor 对话。"""
+    sid = request.sid
+    _doctor_chat_stop[sid] = False
+    try:
+        msg = data.get("message", "")
+        hist = data.get("history", [])
+        for step in _get_doctor().chat(msg, hist):
+            # 检查是否被打断
+            if _doctor_chat_stop.get(sid):
+                _get_doctor().stop()
+                break
+            emit("doctor_chat_step", step)
+            if step.get("done") and step.get("reply"):
+                emit("doctor_reply", {"reply": step["reply"]})
+    except Exception as e:
+        emit("doctor_reply", {"error": str(e), "reply": f"Error: {e}"})
+    finally:
+        _doctor_chat_stop.pop(sid, None)
+
+@socketio.on("doctor_run")
+def on_doctor_run(data=None):
+    """WebSocket: 启动 Doctor 自主模式。"""
+    global _doctor_task
+    try:
+        goal = (data or {}).get("goal", "诊断 adapter 并确保硬技能能正常执行")
+        agent = _get_doctor()
+        if agent.is_running:
+            emit("doctor_step", {"error": "已有任务在运行"})
+            return
+
+        import threading
+        task_id = f"doctor_{int(time.time())}"
+        _doctor_task = {"id": task_id, "running": True, "steps": []}
+
+        def _run():
+            try:
+                for step in agent.run(goal):
+                    _doctor_task["steps"].append(step)
+                    socketio.emit("doctor_step", step)
+                    if step.get("done"):
+                        break
+            finally:
+                _doctor_task["running"] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        emit("doctor_step", {"started": True, "task_id": task_id})
+    except Exception as e:
+        emit("doctor_step", {"error": str(e)})
 
 
 # ── BodySense API ─────────────────────────────────────────────────────────────
@@ -2342,6 +2856,29 @@ def on_action_result(data):
 
 # ── Bootstrap API (Phase 4) ─────────────────────────────────────────────────
 
+
+
+@app.route("/api/map/landmarks")
+def api_map_landmarks():
+    """返回 WORLD_MAP.md 中的地标列表 (NED 坐标)"""
+    import re as _re
+    map_path = os.path.join(_BASE_DIR, "robot_profile", "WORLD_MAP.md")
+    landmarks = []
+    if os.path.exists(map_path):
+        text = open(map_path, "r", encoding="utf-8").read()
+        # 解析表格行: | name | (n, e) | desc |
+        for m in _re.finditer(r"\|\s*(.+?)\s*\|\s*\((-?[\d.]+),\s*(-?[\d.]+)\)\s*\|\s*(.+?)\s*\|", text):
+            name = m.group(1).strip().strip("|").strip()
+            if name in ("物体", "地标", "---", ""):
+                continue
+            landmarks.append({
+                "name": name,
+                "n": float(m.group(2)),
+                "e": float(m.group(3)),
+                "desc": m.group(4).strip(),
+            })
+    return jsonify({"landmarks": landmarks})
+
 @app.route("/api/bootstrap/status", methods=["GET"])
 def api_bootstrap_status():
     """获取引导状态"""
@@ -2410,7 +2947,7 @@ if __name__ == "__main__":
     setup_logging(log_dir="logs", level="INFO")
     preflight_report = run_preflight()
 
-    # 启动世界状态定时推送
+        # 启动世界状态定时推送
     t = threading.Thread(target=_world_state_broadcaster, daemon=True)
     t.start()
 
@@ -2419,4 +2956,12 @@ if __name__ == "__main__":
     init_thread.start()
 
     logger.info("AerialClaw 控制台服务启动于 http://localhost:5001")
+    
+    # 启动 Adapter 自主健康守护（在主线程）
+    try:
+        pass  # Doctor Agent runs on-demand, not as daemon
+        logger.info("🤖 Adapter 自主监控已启动")
+    except Exception as e:
+        logger.warning(f"Adapter 自主监控启动失败: {e}")
+
     socketio.run(app, host="0.0.0.0", port=5001, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
