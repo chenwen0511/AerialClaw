@@ -286,8 +286,21 @@ class AirSimPhysicsAdapter(SimAdapter):
             self._client.arm_disarm(True, self._vehicle_name)
             self._connected = True
 
-            # 等待物理引擎稳定，记录 spawn 坐标
+            # 用 simSetVehiclePose 传送到已知地面位置，确保 spawn 坐标准确
+            # （避免上次飞行结束后无人机停在半空中导致 spawn 读错）
+            logger.info("Resetting drone to ground position...")
+            try:
+                ground_pose = {
+                    "position": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+                    "orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+                }
+                self._client._rpc.call("simSetVehiclePose", ground_pose, True, self._vehicle_name)
+            except Exception as e:
+                logger.warning(f"Ground reset teleport failed: {e}")
+
+            # 等待物理引擎稳定（传送后需要时间落地）
             logger.info("Waiting for physics engine to stabilize...")
+            time.sleep(2.0)
             time.sleep(1.5)
             x, y, z = self._get_xyz()
             self._spawn_x = x
