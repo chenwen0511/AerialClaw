@@ -146,3 +146,8 @@ class AirSimDirectClient:
                                      duration: float, vehicle_name: str = ""):
         """Speed control: fly at (vx, vy, vz) m/s for duration seconds (NED frame)."""
         self._rpc.call("moveByVelocity", vx, vy, vz, duration, 0, 0, 0, 0, vehicle_name)
+
+    def move_by_roll_pitch_yaw_z(self, roll: float, pitch: float, yaw: float,
+                                  z: float, duration: float, vehicle_name: str = ""):
+        """Attitude + altitude control (NED). z: negative = up."""
+        return self._rpc.call("moveByRollPitchYawZ", roll, pitch, yaw, z, duration, vehicle_name)

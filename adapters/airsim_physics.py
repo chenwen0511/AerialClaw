@@ -1,9 +1,9 @@
 """
 airsim_physics.py
-物理引擎驱动的 AirSim 适配器（Phase 1）
+物理引擎驱动的 AirSim 适配器（Phase 2）
 
 与 airsim_adapter.py（teleport 版）的关键区别：
-  - 用 AirSim 原生 moveToPosition / takeoff / land API
+  - 用 moveByRollPitchYawZ 实现定向飞行（moveToPosition 在 OpenFly 定制版不可用）
   - 物理引擎驱动飞行，有碰撞检测、真实飞行动力学
   - 无需 hold 线程对抗物理引擎
   - 支持 request_stop() 外部打断正在进行的飞行
@@ -15,7 +15,7 @@ airsim_physics.py
 """
 
 import logging
-import threading
+import math
 import time
 from typing import Optional
 
@@ -30,16 +30,16 @@ _SAFE_ALT = 50.0       # 安全飞行最低高度（米）
 
 
 class AirSimPhysicsAdapter(SimAdapter):
-    """物理引擎驱动的 AirSim 适配器，使用 moveToPosition 原生 API。"""
+    """物理引擎驱动的 AirSim 适配器，使用 moveByRollPitchYawZ API。"""
 
     name = "airsim_physics"
-    description = "AirSim Physics - native moveToPosition/takeoff/land API"
+    description = "AirSim Physics - moveByRollPitchYawZ/takeoff/land API"
     supported_vehicles = ["multirotor"]
 
     def __init__(self, vehicle_name: str = "drone_1"):
         self._vehicle_name = vehicle_name
         self._client = None          # 状态查询 + 紧急停止
-        self._fly_client = None      # 飞行指令（在 fly 线程中调用）
+        self._fly_client = None      # 飞行指令
         self._connected = False
 
         # spawn 点（连接时记录，用于坐标归零）
@@ -52,10 +52,6 @@ class AirSimPhysicsAdapter(SimAdapter):
         self._stop_requested: bool = False     # 外部打断标志
         self._landed: bool = False             # 已着陆标记
         self._last_obstacle_info: dict = {}    # 最近一次避障信息
-
-        # 飞行线程
-        self._fly_thread: Optional[threading.Thread] = None
-        self._fly_result: list = [None]        # 线程结果共享容器
 
     # ── 内部工具 ─────────────────────────────────────────────────────────────
 
@@ -125,80 +121,127 @@ class AirSimPhysicsAdapter(SimAdapter):
             return None
 
     def _emergency_hover(self):
-        """紧急悬停（在主线程调用，使用 _client）。"""
+        """紧急悬停（使用 _client）。"""
         try:
             self._client.hover_async_join(self._vehicle_name)
         except Exception as e:
             logger.warning(f"Emergency hover failed: {e}")
 
-    def _run_move_to_position(self, x, y, z, speed, timeout_sec=120.0):
-        """在 fly 线程中执行 moveToPosition（阻塞直到到达或超时）。"""
-        try:
-            self._fly_client.move_to_position_async_join(
-                x, y, z, speed, timeout_sec, self._vehicle_name
-            )
-            self._fly_result[0] = 'ok'
-        except Exception as e:
-            self._fly_result[0] = f'error:{e}'
+    def _get_current_yaw(self) -> float:
+        """从四元数获取当前 yaw（弧度）。"""
+        raw = self._get_raw_state()
+        orient = raw.get("kinematics_estimated", {}).get("orientation", {})
+        qw = float(orient.get("w_val", 1.0))
+        qx = float(orient.get("x_val", 0.0))
+        qy = float(orient.get("y_val", 0.0))
+        qz = float(orient.get("z_val", 0.0))
+        return math.atan2(2.0 * (qw * qz + qx * qy),
+                          1.0 - 2.0 * (qy * qy + qz * qz))
 
-    def _fly_with_interrupt(self, x, y, z, speed, timeout_sec=120.0,
-                            check_obstacle=False) -> str:
+    def _fly_to_with_rpyz(self, target_x: float, target_y: float, target_z: float,
+                           speed: float = 5.0, timeout_sec: float = 120.0,
+                           check_obstacle: bool = False) -> str:
         """
-        启动 moveToPosition 线程，主线程轮询打断请求和碰撞状态。
-        返回: 'ok' / 'stopped' / 'collision' / 'obstacle' / 'error:...'
+        用 moveByRollPitchYawZ 飞向目标点，主循环控制 pitch/yaw。
+        返回: 'ok' / 'stopped' / 'collision' / 'obstacle' / 'timeout'
         """
-        self._fly_result[0] = None
+        MAX_PITCH = 0.15      # 最大前倾角（弧度，约 8.5°）
+        SLOW_DIST = 10.0      # 开始减速的距离（米）
+        ARRIVE_DIST = 2.0     # 到达判定距离（米）
+        CMD_DURATION = 0.5    # 每次指令持续时间（秒）
+        CHECK_INTERVAL = 0.1  # 状态检查间隔（秒）
+        SAFE_DIST = 8.0       # 障碍物安全距离（米）
+
         self.is_flying = True
-
-        self._fly_thread = threading.Thread(
-            target=self._run_move_to_position,
-            args=(x, y, z, speed, timeout_sec),
-            daemon=True,
-        )
-        self._fly_thread.start()
-
-        SAFE_DIST = 8.0
+        start_time = time.time()
         check_counter = 0
 
-        while self._fly_thread.is_alive():
-            time.sleep(0.1)
-            check_counter += 1
-
-            # 外部打断
-            if self._stop_requested:
-                self._stop_requested = False
-                logger.warning("🛑 外部打断！悬停中...")
-                self._emergency_hover()
-                self._fly_thread.join(timeout=3.0)
-                self.is_flying = False
-                return 'stopped'
-
-            # 碰撞检测（每 5 次轮询 ≈ 0.5s）
-            if check_counter % 5 == 0:
-                if self._check_collision():
-                    logger.warning("💥 检测到碰撞！紧急悬停")
+        try:
+            while True:
+                # 超时检查
+                if time.time() - start_time > timeout_sec:
+                    logger.warning("_fly_to_with_rpyz: timeout")
                     self._emergency_hover()
-                    self._fly_thread.join(timeout=3.0)
-                    self.is_flying = False
-                    return 'collision'
+                    return 'timeout'
 
-            # 深度图避障（每 15 次轮询 ≈ 1.5s）
-            if check_obstacle and check_counter % 15 == 0:
-                front_dist = self._check_depth('cam_front')
-                if front_dist is not None and front_dist < SAFE_DIST:
-                    logger.warning(f"⚠️ 前方障碍物 {front_dist:.1f}m！自动悬停")
-                    self._last_obstacle_info = {
-                        'front_dist': front_dist,
-                        'direction': '前方',
-                    }
+                # 外部打断
+                if self._stop_requested:
+                    self._stop_requested = False
+                    logger.warning("🛑 外部打断！悬停中...")
                     self._emergency_hover()
-                    self._fly_thread.join(timeout=3.0)
-                    self.is_flying = False
-                    return 'obstacle'
+                    return 'stopped'
 
-        self._fly_thread.join(timeout=1.0)
-        self.is_flying = False
-        return self._fly_result[0] or 'ok'
+                # 读取当前位置
+                cx, cy, cz = self._get_xyz()
+
+                # 水平距离和到达判定
+                dx = target_x - cx
+                dy = target_y - cy
+                horiz_dist = math.sqrt(dx * dx + dy * dy)
+
+                if horiz_dist < ARRIVE_DIST:
+                    total_dist = math.sqrt(dx*dx + dy*dy + (target_z - cz)**2)
+                    logger.info(f"_fly_to_with_rpyz: arrived (dist={total_dist:.2f}m)")
+                    self._emergency_hover()
+                    return 'ok'
+
+                # 计算 yaw（朝目标方向，NED: atan2(East, North)）
+                yaw = math.atan2(dy, dx)
+
+                # 计算 pitch（前倾角，距离越近越小）
+                if horiz_dist > SLOW_DIST:
+                    pitch = -MAX_PITCH
+                else:
+                    pitch = -MAX_PITCH * (horiz_dist / SLOW_DIST)
+
+                logger.debug(
+                    f"fly rpyz: horiz={horiz_dist:.1f}m yaw={math.degrees(yaw):.1f}° "
+                    f"pitch={math.degrees(pitch):.1f}° z={target_z:.2f}"
+                )
+
+                # 发送飞行指令
+                try:
+                    self._fly_client.move_by_roll_pitch_yaw_z(
+                        0.0, pitch, yaw, target_z, CMD_DURATION, self._vehicle_name
+                    )
+                except Exception as e:
+                    logger.warning(f"moveByRollPitchYawZ error: {e}")
+
+                # 轮询等待，检查碰撞和障碍
+                steps = int(CMD_DURATION / CHECK_INTERVAL)
+                for _ in range(steps):
+                    time.sleep(CHECK_INTERVAL)
+                    check_counter += 1
+
+                    if self._stop_requested:
+                        break
+
+                    # 碰撞检测（每 5 次轮询 ≈ 0.5s）
+                    if check_counter % 5 == 0:
+                        if self._check_collision():
+                            logger.warning("💥 检测到碰撞！紧急悬停")
+                            self._emergency_hover()
+                            return 'collision'
+
+                    # 深度图避障（每 15 次轮询 ≈ 1.5s）
+                    if check_obstacle and check_counter % 15 == 0:
+                        front_dist = self._check_depth('cam_front')
+                        if front_dist is not None and front_dist < SAFE_DIST:
+                            logger.warning(f"⚠️ 前方障碍物 {front_dist:.1f}m！自动悬停")
+                            self._last_obstacle_info = {
+                                'front_dist': front_dist,
+                                'direction': '前方',
+                            }
+                            self._emergency_hover()
+                            return 'obstacle'
+        finally:
+            self.is_flying = False
+
+    def _fly_with_interrupt(self, x: float, y: float, z: float, speed: float,
+                             timeout_sec: float = 120.0,
+                             check_obstacle: bool = False) -> str:
+        """飞向目标点，支持外部打断、碰撞检测、深度避障。"""
+        return self._fly_to_with_rpyz(x, y, z, speed, timeout_sec, check_obstacle)
 
     # ── 连接管理 ──────────────────────────────────────────────────────────────
 
@@ -351,7 +394,7 @@ class AirSimPhysicsAdapter(SimAdapter):
 
     def takeoff(self, altitude: float = 5.0) -> ActionResult:
         """
-        使用 AirSim 原生 takeoff API 起飞，然后 moveToPosition 上升到目标高度。
+        使用 AirSim 原生 takeoff API 起飞，然后用 moveByRollPitchYawZ 上升到目标高度。
         altitude: 相对地面高度（米）。
         """
         if not self._connected:
@@ -364,19 +407,24 @@ class AirSimPhysicsAdapter(SimAdapter):
             self._fly_client.takeoff_async_join(timeout_sec=20.0,
                                                 vehicle_name=self._vehicle_name)
 
-            # 2. moveToPosition 上升到目标高度
-            x, y, _ = self._get_xyz()
+            # 2. moveByRollPitchYawZ 上升到目标高度
             target_z = self._spawn_z - altitude   # z 减小 = 向上
+            self._fly_client.move_by_roll_pitch_yaw_z(
+                0.0, 0.0, 0.0, target_z, 5.0, self._vehicle_name
+            )
 
-            result = self._fly_with_interrupt(x, y, target_z, speed=3.0, timeout_sec=60.0)
+            # 3. 轮询等待到达目标高度（最多 15s）
+            deadline = time.time() + 15.0
+            while time.time() < deadline:
+                _, _, cz = self._get_xyz()
+                if abs(cz - target_z) < 0.5:
+                    break
+                time.sleep(0.2)
 
             actual_alt = self._get_altitude()
-            logger.info(f"Takeoff done: altitude={actual_alt:.1f}m, result={result}")
-
-            if result in ('ok', 'stopped'):
-                return ActionResult(success=True,
-                                    message=f"Takeoff OK: {actual_alt:.1f}m altitude")
-            return ActionResult(success=False, message=f"Takeoff result: {result}")
+            logger.info(f"Takeoff done: altitude={actual_alt:.1f}m")
+            return ActionResult(success=True,
+                                message=f"Takeoff OK: {actual_alt:.1f}m altitude")
 
         except Exception as e:
             return ActionResult(success=False, message=str(e))
@@ -457,21 +505,29 @@ class AirSimPhysicsAdapter(SimAdapter):
             return ActionResult(success=False, message=str(e))
 
     def hover(self, duration: float = 5.0) -> ActionResult:
-        """悬停指定秒数（调用 AirSim hover API 保持位置）。"""
+        """悬停指定秒数（用 moveByRollPitchYawZ 保持当前姿态和高度）。"""
         if not self._connected:
             return ActionResult(success=False, message="Not connected")
         try:
             logger.info(f"Hover: {duration}s")
-            self._client.hover_async_join(self._vehicle_name)
+            current_yaw = self._get_current_yaw()
+            _, _, current_z = self._get_xyz()
+
+            CMD_DURATION = 0.5
             elapsed = 0.0
-            interval = 0.1
             while elapsed < duration:
                 if self._stop_requested:
                     self._stop_requested = False
                     return ActionResult(success=True,
                                         message=f"Hover aborted at {elapsed:.1f}s")
-                time.sleep(interval)
-                elapsed += interval
+                remaining = duration - elapsed
+                cmd_dur = min(CMD_DURATION, remaining)
+                self._fly_client.move_by_roll_pitch_yaw_z(
+                    0.0, 0.0, current_yaw, current_z, cmd_dur, self._vehicle_name
+                )
+                time.sleep(cmd_dur)
+                elapsed += cmd_dur
+
             return ActionResult(success=True, message=f"Hovered {duration}s")
         except Exception as e:
             return ActionResult(success=False, message=str(e))
