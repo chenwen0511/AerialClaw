@@ -78,10 +78,14 @@ class AirSimPhysicsAdapter(SimAdapter):
         return self._spawn_z - z  # spawn_z - z: z 减小 = 向上 = 高度增加
 
     def _check_collision(self) -> bool:
-        """检查是否发生碰撞。"""
+        """检查是否发生新碰撞（排除起飞时地面接触等旧碰撞记录）。"""
         try:
             col = self._client.sim_get_collision_info(self._vehicle_name)
-            return bool(col.get("has_collided", False))
+            if not col.get("has_collided", False):
+                return False
+            # 只有碰撞时间戳比飞行开始时间更新才算
+            col_ts = col.get("time_stamp", 0)
+            return col_ts > getattr(self, '_fly_start_ts', 0)
         except Exception:
             return False
 
@@ -155,6 +159,12 @@ class AirSimPhysicsAdapter(SimAdapter):
         self.is_flying = True
         start_time = time.time()
         check_counter = 0
+        # 记录飞行开始时的碰撞时间戳，过滤旧碰撞（如起飞地面接触）
+        try:
+            col_info = self._client.sim_get_collision_info(self._vehicle_name)
+            self._fly_start_ts = col_info.get("time_stamp", 0)
+        except Exception:
+            self._fly_start_ts = 0
 
         try:
             while True:
