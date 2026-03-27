@@ -142,10 +142,39 @@ class AirSimDirectClient:
         except Exception:
             return {}
 
+    def move_by_velocity(self, vx: float, vy: float, vz: float,
+                          duration: float, vehicle_name: str = "",
+                          drivetrain: int = 0,
+                          yaw_mode: dict = None):
+        """
+        Speed control: fly at (vx, vy, vz) m/s for duration seconds (NED world frame).
+        drivetrain: 0=MaxDegreeOfFreedom, 1=ForwardOnly
+        yaw_mode: {'is_rate': bool, 'yaw_or_rate': float}
+        """
+        if yaw_mode is None:
+            yaw_mode = {'is_rate': False, 'yaw_or_rate': 0.0}
+        return self._rpc.call("moveByVelocity", vx, vy, vz, duration,
+                              drivetrain, yaw_mode, vehicle_name)
+
+    def move_by_velocity_z(self, vx: float, vy: float, z: float,
+                            duration: float, vehicle_name: str = "",
+                            drivetrain: int = 0,
+                            yaw_mode: dict = None):
+        """
+        Speed control with altitude hold: fly at (vx, vy) m/s while holding z altitude.
+        z: NED z coordinate (negative = up).
+        drivetrain: 0=MaxDegreeOfFreedom, 1=ForwardOnly
+        yaw_mode: {'is_rate': bool, 'yaw_or_rate': float}
+        """
+        if yaw_mode is None:
+            yaw_mode = {'is_rate': False, 'yaw_or_rate': 0.0}
+        return self._rpc.call("moveByVelocityZ", vx, vy, z, duration,
+                              drivetrain, yaw_mode, vehicle_name)
+
     def move_by_velocity_async_join(self, vx: float, vy: float, vz: float,
                                      duration: float, vehicle_name: str = ""):
-        """Speed control: fly at (vx, vy, vz) m/s for duration seconds (NED frame)."""
-        self._rpc.call("moveByVelocity", vx, vy, vz, duration, 0, 0, 0, 0, vehicle_name)
+        """Legacy wrapper — calls move_by_velocity with defaults."""
+        return self.move_by_velocity(vx, vy, vz, duration, vehicle_name)
 
     def move_by_roll_pitch_yaw_z(self, roll: float, pitch: float, yaw: float,
                                   z: float, duration: float, vehicle_name: str = ""):

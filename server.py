@@ -44,7 +44,8 @@ _UI_DIST  = os.path.join(_BASE_DIR, "ui", "dist")
 app = Flask(__name__, static_folder=_UI_DIST, static_url_path="")
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "aerialclaw-dev")
 CORS(app, resources={r"/api/*": {"origins": "*"}, r"/socket.io/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
+                    allow_unsafe_werkzeug=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  全局状态
@@ -269,6 +270,12 @@ def _try_connect_adapter():
                 conn_str = f"{host}:{port}"
                 state.push_log("info", f"Connecting to AirSim Physics adapter ({conn_str})...")
                 ok = init_adapter("airsim_physics", connection_str=conn_str, timeout=15)
+            elif sim_adapter == "mavsdk":
+                host = os.getenv("AIRSIM_HOST", "127.0.0.1")
+                port = os.getenv("AIRSIM_PORT", "41451")
+                conn_str = f"{host}:{port}"
+                state.push_log("info", f"Connecting to MAVSDK+AirSim hybrid adapter (AirSim={conn_str})...")
+                ok = init_adapter("mavsdk", connection_str=conn_str, timeout=35)
             elif sim_adapter == "mock":
                 state.push_log("info", "Using mock adapter (no hardware)...")
                 ok = init_adapter("mock", timeout=5)
@@ -284,7 +291,7 @@ def _try_connect_adapter():
             _start_telemetry_sync()
 
             # AirSim 模式下启动摄像头流推送
-            if sim_adapter in ("airsim", "airsim_physics") and ok:
+            if sim_adapter in ("airsim", "airsim_physics", "mavsdk") and ok:
                 _start_airsim_camera_stream()
                 # 启动被动感知引擎
                 _start_passive_perception()
@@ -395,11 +402,9 @@ def _start_airsim_camera_stream():
 
     # AirSim 摄像头 ID → 前端方位名映射 (settings.json 已配好 5 个方向)
     AIRSIM_CAMERAS = {
-        "cam_front": "front",
-        "cam_right": "right",
-        "cam_left": "left",
-        "cam_rear": "rear",
-        "cam_down": "down",
+        "front_center": "front",
+        "back_center": "rear",
+        "bottom_center": "down",
     }
 
     def _airsim_stream_loop():
@@ -425,6 +430,8 @@ def _start_airsim_camera_stream():
                     r = responses[0]
                     h = r.get("height", 0)
                     w = r.get("width", 0)
+                    if w == 0:
+                        logger.warning(f"摄像头 {cam_id} 返回空图 vehicle={vehicle}")
                     data = r.get("image_data_uint8") or r.get("image_data", b"")
                     if isinstance(data, str):
                         data = b64mod.b64decode(data)
@@ -448,9 +455,10 @@ def _start_airsim_camera_stream():
         while state.initialized:
             try:
                 adapter = get_adapter()
-                if not adapter or not getattr(adapter, '_connected', False):
+                if not adapter:
                     time.sleep(1)
                     continue
+                # 摄像头流：只要 AirSim RPC 可达就推，不依赖飞控连接状态
 
                 # 首次: 建立摄像头专用 RPC 连接
                 if _cam_rpc is None:
@@ -471,29 +479,18 @@ def _start_airsim_camera_stream():
 
                 frame_counter += 1
                 cameras_payload = {}
-                vehicle = getattr(adapter, '_vehicle_name', '')
+                vehicle = getattr(adapter, '_vn', '') or getattr(adapter, '_vehicle_name', 'PX4')
 
-                # 飞行中: 只拉前方且每3帧拉一次; 悬停: front每帧, 其余每10帧轮换
-                flying = getattr(adapter, 'is_flying', False)
-
+                # 飞行和悬停都拉 front，其余摄像头每 5 帧轮换
                 active_cams = {}
-                if flying:
-                    # 飞行时大幅降频，把 RPC 带宽让给 _do_set_pose
-                    if frame_counter % 3 == 0:
-                        for cam_id, direction in AIRSIM_CAMERAS.items():
-                            if direction == "front":
-                                active_cams[cam_id] = direction
-                                break
-                else:
-                    # 悬停时正常拉取
-                    for cam_id, direction in AIRSIM_CAMERAS.items():
-                        if direction == "front":
-                            active_cams[cam_id] = direction
-                            break
-                    other_cams = [(cid, d) for cid, d in AIRSIM_CAMERAS.items() if d != "front"]
-                    if other_cams and frame_counter % 10 == 0:
-                        pick = other_cams[(frame_counter // 10) % len(other_cams)]
-                        active_cams[pick[0]] = pick[1]
+                for cam_id, direction in AIRSIM_CAMERAS.items():
+                    if direction == "front":
+                        active_cams[cam_id] = direction
+                        break
+                other_cams = [(cid, d) for cid, d in AIRSIM_CAMERAS.items() if d != "front"]
+                if other_cams and frame_counter % 5 == 0:
+                    pick = other_cams[(frame_counter // 5) % len(other_cams)]
+                    active_cams[pick[0]] = pick[1]
 
                 # 顺序拉取（最多2个摄像头，线程池开销不值得）
                 for cam_id, direction in active_cams.items():
@@ -508,6 +505,7 @@ def _start_airsim_camera_stream():
                         cameras_payload[direction] = _cached_frames[direction]
 
                 if cameras_payload:
+                    logger.info(f"📷 推送摄像头帧: {list(cameras_payload.keys())}")
                     socketio.emit("sensor_cameras", cameras_payload)
                     if "front" in cameras_payload:
                         socketio.emit("sensor_camera", cameras_payload["front"])
@@ -524,7 +522,7 @@ def _start_airsim_camera_stream():
             _lidar_counter = getattr(_airsim_stream_loop, "_lc", 0) + 1
             _airsim_stream_loop._lc = _lidar_counter
             if _lidar_counter % 5 != 0:
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
             try:
                 import math
@@ -749,6 +747,7 @@ def _start_sensor_stream():
                             "fps": round(info["fps"], 1),
                         }
                 if cameras_payload:
+                    logger.info(f"📷 推送摄像头帧: {list(cameras_payload.keys())}")
                     socketio.emit("sensor_cameras", cameras_payload)
 
                 # 兼容旧前端：也发 sensor_camera (front)
@@ -866,6 +865,11 @@ def _get_system_status() -> dict:
 def api_init():
     """初始化系统（异步，通过 WebSocket 推送进度）。"""
     if state.initialized:
+        # 如果 mavsdk 模式且摄像头流没跑，尝试启动
+        import os
+        sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+        if sim_adapter in ("airsim", "airsim_physics", "mavsdk"):
+            _start_airsim_camera_stream()
         return jsonify({"ok": True, "msg": "系统已初始化"})
     t = threading.Thread(target=_do_init, daemon=True)
     t.start()

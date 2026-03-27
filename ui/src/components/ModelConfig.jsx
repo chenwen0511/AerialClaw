@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 
-const API = window.location.protocol + '//' + window.location.hostname + ':5001'
+const API = window.location.protocol + '//' + window.location.host
 
 export default function ModelConfig({ collapsed = false }) {
   const [config, setConfig] = useState(null)

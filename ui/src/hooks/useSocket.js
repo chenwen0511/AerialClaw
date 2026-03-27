@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { io } from 'socket.io-client'
 
-const SERVER_URL = window.location.protocol + '//' + window.location.hostname + ':5001'
+const SERVER_URL = window.location.protocol + '//' + window.location.host
 
 export function useSocket() {
   const socketRef = useRef(null)
@@ -35,7 +35,7 @@ export function useSocket() {
 
   useEffect(() => {
     const socket = io(SERVER_URL, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling'],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     })
