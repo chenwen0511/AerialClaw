@@ -147,18 +147,28 @@ This design supports research across various application scenarios:
 
 ## Simulation Verification Environment
 
-Currently implemented in an **AirSim + OpenFly** simulation environment (Shanghai urban scene):
+Currently verified with dual simulation backends:
+
+### AirSim + OpenFly (Shanghai Urban Scene)
 
 <p align="center">
-  <img src="assets/gazebo_demo.gif" alt="Flying Through Urban Skyscrapers" width="720" />
+  <img src="assets/airsim_flight.gif" alt="AirSim Shanghai Urban Flight" width="720" />
   <br>
-  <em>Drone navigating through high-rise buildings, automatically climbing to safe altitude to avoid skyscrapers</em>
+  <em>Autonomous flight in Shanghai urban scene — AI-driven navigation through high-rise buildings with real-time perception</em>
+</p>
+
+### PX4 + Gazebo Harmonic
+
+<p align="center">
+  <img src="assets/gazebo_demo.gif" alt="PX4 Gazebo Urban Rescue" width="720" />
+  <br>
+  <em>PX4 SITL with Gazebo Harmonic — urban rescue scenario with custom x500 sensor payload</em>
 </p>
 
 | Component | Technical Choice |
 |-----------|------------------|
-| Flight Control System | AirSim SimpleFlight (API-based control) |
-| Simulation Environment | Unreal Engine 4 + OpenFly AirSim (Shanghai urban scene) |
+| Flight Control System | AirSim SimpleFlight (API-based) / PX4 SITL (MAVSDK) |
+| Simulation Environment | UE4 + OpenFly AirSim (Shanghai) / Gazebo Harmonic (Urban Rescue) |
 | Sensor Models | Front camera + simulated LiDAR (360°) |
 | LLM / VLM | GPT-4o (planning, perception, report generation) |
 | Communication Protocol | AirSim RPC (pure-socket msgpack) |
