@@ -19,7 +19,7 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 > *"No pre-scripted procedures, just defined capabilities — let every drone think, learn, and grow through its own missions."*
 
 <p align="center">
-  <img src="assets/demo.gif" alt="AerialClaw Demo" width="720" />
+  <img src="assets/console_demo.gif" alt="AerialClaw Console — AI Autonomous Flight Control" width="720" />
 </p>
 
 ---

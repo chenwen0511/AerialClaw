@@ -20,7 +20,7 @@
 > *"不预设流程，只定义能力——让每架无人机在任务中自主思考、积累经验、持续成长。"*
 
 <p align="center">
-  <img src="assets/demo.gif" alt="AerialClaw 演示" width="720" />
+  <img src="assets/console_demo.gif" alt="AerialClaw 控制台 — AI 自主飞行控制" width="720" />
 </p>
 
 ---
