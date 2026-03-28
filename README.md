@@ -39,7 +39,7 @@ The project uses Markdown documents to define and maintain each agent's cognitiv
 - [Decision Mechanism](#decision-mechanism-autonomous-loop-implementation)
 - [Skill System](#integrated-skill-system)
 - [Perception System](#perception-system)
-- [Simulation Environment](#simulation-verification-environment)
+- [Simulation Environment](#simulation-demo-environment)
 - [Web Monitoring Interface](#web-monitoring-interface)
 - [Installation and Deployment](#installation-and-deployment)
 - [Quick Start](#quick-start)
@@ -145,7 +145,7 @@ This design supports research across various application scenarios:
 - 🏗️ **Facility Inspection** — Safety inspection of building structures
 - 🌾 **Agricultural Observation** — Assessment of crop growth status
 
-## Simulation Verification Environment
+## Simulation Demo Environment
 
 Currently verified in **AirSim + OpenFly** simulation environment (Shanghai urban scene):
 
