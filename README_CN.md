@@ -24,28 +24,28 @@
 </p>
 
 ---
-
-## 📑 目录
-
-- [📢 更新日志](#-更新日志)
-- [研究背景与动机](#研究背景与动机)
-- [系统架构设计](#系统架构设计)
-- [决策机制](#决策机制自主循环实现)
-- [技能体系](#已接入的技能体系)
-- [感知系统](#感知系统)
-- [仿真演示环境](#仿真演示环境)
-- [Web 监控界面](#web监控界面)
-- [安装与部署](#安装与部署)
-- [快速开始](#快速开始)
-- [项目结构](#项目结构)
-- [致谢](#致谢)
-
+---
 ---
 
 ## 📢 更新日志
 
 - **(2026/3/24)** AerialClaw v2.0 更新 — 安全包线、四层记忆、通用设备协议、自进化引擎、AirSim 上海城市场景集成、自主城市巡检演示、GPT-4o 视觉感知、实时地图更新、Doctor Agent 适配器、WASD 手动控制、平滑插值飞行。
 - **(2026/3/14)** AerialClaw v1.0 发布 — 完整 Agent 决策循环、12 项硬技能、反思引擎、Web 控制台、PX4+Gazebo 仿真集成。
+
+
+## 📑 目录
+
+- [研究背景与动机](#研究背景与动机)
+- [系统架构设计](#系统架构设计)
+- [决策机制](#决策机制自主循环实现)
+- [技能体系](#技能体系)
+- [感知系统](#感知系统)
+- [仿真演示环境](#仿真演示环境)
+- [Web 监控界面](#web-监控界面)
+- [安装与部署](#安装与部署)
+- [快速开始](#快速开始)
+- [项目结构](#项目结构)
+- [致谢](#致谢)
 
 ## 研究背景与动机
 
@@ -91,15 +91,15 @@
 
 所有文档采用Markdown格式，支持版本管理与人工审阅。系统在任务前后自动读写相关文档。
 
-### 已接入的技能体系
+### 技能体系
 
-系统采用**四层技能架构**，灵感来自人类认知结构，每层处理不同抽象级别的能力：
+系统采用**硬技能 + 软技能两层架构** — 硬技能处理所有原子操作，软技能提供策略组合：
 
 <p align="center">
-  <img src="assets/skill_architecture.png" alt="四层技能架构" width="700" />
+  <img src="assets/skill_architecture.png" alt="技能架构" width="700" />
 </p>
 
-**运动技能（12 项原子动作）** — 无人机物理控制：
+**硬技能（16 项原子操作）** — 所有可直接执行的动作：
 
 | 类别 | 技能 | 说明 |
 |:---|:---|:---|
@@ -107,19 +107,11 @@
 | 环境感知 | `look_around` `detect_object` `fuse_perception` | 多方位观察、目标检测（VLM）、多传感器语义融合 |
 | 状态查询 | `get_position` `get_battery` | 获取当前位置、电量状态 |
 | 标记管理 | `mark_location` `get_marks` | 标记兴趣点、查询已标记位置 |
+| 计算能力 | `run_python` `http_request` `read_file` `write_file` | 沙箱代码执行、HTTP 请求、文件读写 |
 
-**认知技能（4 项元技能）** — 信息处理与计算：
+硬技能涵盖物理无人机控制和信息处理两大类——例如在规划飞行路径前查询天气 API，或用 Python 计算最优路线。所有硬技能内置安全机制：`run_python` 在自动降级沙箱中运行（Docker → subprocess → restricted），`http_request` 屏蔽内网并强制超时，文件操作限制在工作目录内并记录审计日志。
 
-| 技能 | 说明 | 安全机制 |
-|:---|:---|:---|
-| `run_python` | 在沙箱环境中执行 Python 代码 | 自动沙箱（Docker → subprocess → restricted） |
-| `http_request` | HTTP GET/POST 请求获取信息 | 内网屏蔽，超时强制 |
-| `read_file` | 读取文件内容 | 限制在工作目录 |
-| `write_file` | 写入文件内容 | 限制在工作目录，审计记录 |
-
-认知技能赋予 Agent **超越物理动作的信息获取与处理能力** — 例如在规划飞行路径前查询天气 API，或用 Python 计算最优路线。
-
-**软技能（场景策略文档）**：
+**软技能（策略文档）**：
 
 | 策略 | 说明 |
 |:---|:---|
@@ -127,7 +119,7 @@
 | `rescue_person` | 人员救援 — 发现目标后的接近、评估、标记、上报全流程 |
 | `patrol_area` | 区域巡逻 — 按策略覆盖区域，持续监控异常 |
 
-软技能以 Markdown 文档形式存储，LLM 在执行时读取文档理解策略意图，自主组合运动、认知和感知技能完成任务。系统还支持**动态生成新软技能**：当 LLM 在反思中发现重复的行为模式时，会自动提取为新的策略文档。
+软技能以 Markdown 文档形式存储。执行时，LLM 读取文档理解策略意图，自主组合运动、认知和感知技能完成任务。系统还支持**动态生成新软技能**：当 LLM 在反思中发现重复的行为模式时，会自动提取为新的策略文档。
 
 后续我们计划探索以**技能网络（Skill Network）对软技能的组合与调度进行建模**，使策略选择从纯 LLM 推理逐步演进为可学习、可优化的决策网络。更长远地，我们希望将 AerialClaw 的核心架构解耦为一套**面向通用智能设备的框架**——通过标准化的协议适配层接入各类嵌入式硬件，让任何具备传感与执行能力的设备都能获得同样的自主智能。
 
@@ -167,7 +159,7 @@
 
 **仿真场景要素**：高层商业区、中层住宅楼群、低层建筑、城市道路、空旷起降区。
 
-## Web监控界面
+## Web 监控界面
 
 <p align="center">
   <img src="assets/ui_overview.png" alt="AerialClaw Web控制界面" width="720" />
@@ -252,32 +244,35 @@ LLM_MODEL=gpt-4o                          # 模型名称
 
 ## 快速开始
 
-按顺序启动四个终端：
+### 方式 A：无仿真（Mock 模式）
 
-**终端 1 — 仿真环境**
+不需要 PX4/Gazebo，只看 Web UI 和 AI 功能：
+
 ```bash
-cd ../PX4-Autopilot
-export CMAKE_POLICY_VERSION_MINIMUM=3.5
-export PX4_GZ_WORLD=urban_rescue
-make px4_sitl gz_x500
+SIM_ADAPTER=mock python server.py
+# 打开 http://localhost:5001
 ```
 
-**终端 2 — MAVSDK 服务**
+### 方式 B：PX4 + Gazebo 仿真
+
+**终端 1 — 仿真环境**（需先执行 `./scripts/setup_px4.sh`）
 ```bash
-mavsdk_server -p 50051 udp://:14540
+./scripts/start_sim.sh              # 默认场景
+# 或: ./scripts/start_sim.sh urban_rescue
 ```
 
-**终端 3 — AerialClaw 主服务**
+**终端 2 — AerialClaw 主服务**
 ```bash
-cd AerialClaw
 source venv/bin/activate
 python server.py
 ```
 
-**终端 4 — 浏览器访问**
+**终端 3 — 浏览器访问**
 ```
 http://localhost:5001
 ```
+
+> 手动启动仿真或排查问题，参见 [docs/SIMULATION_SETUP.md](docs/SIMULATION_SETUP.md)。
 
 在 Web 界面中：
 1. 点击「⚡ 初始化系统」
@@ -301,50 +296,28 @@ AerialClaw/
 │   ├── planner_agent.py         #   LLM 任务规划器（记忆感知）
 │   └── chat_mode.py             #   对话模式
 │
-├── core/                        # 核心系统（v2.0）
-│   ├── preflight.py             #   7 项启动自检
-│   ├── doctor.py                #   健康评分系统（0-100）
-│   ├── doctor_checks/           #   连接 / 传感器 / AI / 配置检查
-│   ├── errors.py                #   10 个异常类 + 修复提示
-│   ├── logger.py                #   彩色终端 + 7 天文件轮转
-│   ├── device_manager.py        #   通用设备注册中心
-│   ├── device_analyzer.py       #   LLM 设备能力推断
-│   ├── device_onboarding.py     #   对话式设备建档
-│   ├── code_generator.py        #   自动适配器代码生成
-│   ├── skill_binder.py          #   能力 → 技能匹配
-│   ├── skill_evolver.py         #   技能优化引擎
-│   ├── system_executor.py       #   沙箱代码执行
-│   ├── capability_gap.py        #   三层能力缺口检测
-│   ├── bootstrap.py             #   系统引导编排
-│   ├── nlu_engine.py            #   自然语言理解
-│   ├── hybrid_planner.py        #   端云混合规划
-│   ├── transport.py             #   多协议传输层
-│   ├── failsafe.py              #   故障安全状态机
-│   ├── body_sense/              #   实时硬件感知引擎
-│   └── safety/                  #   脊髓安全架构
-│       ├── command_filter.py    #     命令白名单过滤
-│       ├── sandbox.py           #     自动降级沙箱（Docker→subprocess→restricted）
-│       ├── approval.py          #     人工审批
-│       ├── flight_envelope.py   #     硬编码物理限制
-│       └── audit_log.py         #     不可篡改审计日志
+├── core/                        # 核心系统
+│   ├── errors.py                #   异常类 + 修复提示
+│   └── logger.py                #   彩色终端 + 7 天文件轮转
 │
 ├── perception/                  # 感知系统
 │   ├── daemon.py                #   被动感知守护线程
+│   ├── passive_perception.py    #   后台传感器融合
 │   ├── vlm_analyzer.py          #   主动视觉分析（云端 VLM）
 │   ├── prompts.py               #   感知提示词
 │   └── gz_camera.py             #   Gazebo 摄像头桥接
 │
-├── skills/                      # 四层技能架构
-│   ├── motor_skills.py          #   运动层：起飞、降落、飞行、悬停
-│   ├── perception_skills.py     #   感知层：检测、观察、扫描
-│   ├── cognitive_skills.py      #   认知层：HTTP 请求、Python 执行
-│   ├── soft_skills.py           #   策略层：文档驱动组合
+├── skills/                      # 两层技能架构
+│   ├── motor_skills.py          #   硬技能：飞行控制、感知、状态查询
+│   ├── perception_skills.py     #   硬技能：检测、观察、扫描
+│   ├── cognitive_skills.py      #   硬技能：Python 执行、HTTP 请求、文件读写
+│   ├── observe_skill.py         #   硬技能：多方位观察
+│   ├── soft_skill_manager.py    #   策略层：文档驱动组合
 │   ├── soft_docs/               #   软技能策略文档（Markdown）
-│   ├── hard_skills.py           #   硬技能兼容接口
 │   ├── registry.py              #   技能注册中心（即插即用）
 │   ├── skill_loader.py          #   动态技能加载
 │   ├── dynamic_skill_gen.py     #   运行时技能生成
-│   └── docs/                    #   技能文档（13 项）
+│   └── docs/                    #   技能文档
 │
 ├── memory/                      # 四层记忆系统
 │   ├── memory_manager.py        #   记忆编排器
@@ -358,13 +331,13 @@ AerialClaw/
 │   └── task_log.py              #   结构化任务日志
 │
 ├── adapters/                    # 硬件抽象层
-│   ├── base_adapter.py          #   抽象接口（所有设备）
-│   ├── protocol_adapter.py      #   通用设备协议（REST+WS）
-│   ├── adapter_manager.py       #   多设备适配器管理
-│   ├── adapter_factory.py       #   适配器自动创建
-│   ├── px4_adapter.py           #   PX4 SITL + MAVSDK
-│   ├── airsim_adapter.py        #   AirSim 远程连接
-│   ├── sim_adapter.py           #   仿真基础适配器
+│   ├── sim_adapter.py           #   抽象接口（所有适配器）
+│   ├── adapter_manager.py       #   适配器注册 + 初始化
+│   ├── px4_adapter.py           #   PX4 SITL + MAVSDK（Gazebo）
+│   ├── mavsdk_adapter.py        #   MAVSDK + AirSim 混合适配器
+│   ├── airsim_adapter.py        #   AirSim SimpleFlight 适配器
+│   ├── airsim_physics.py        #   AirSim 物理仿真
+│   ├── airsim_rpc.py            #   AirSim msgpack-RPC 客户端
 │   └── mock_adapter.py          #   Mock 测试适配器
 │
 ├── robot_profile/               # 身份文档
@@ -373,30 +346,23 @@ AerialClaw/
 │   ├── WORLD_MAP.md             #   环境地图
 │   └── body_generator.py        #   从在线设备自动生成 BODY.md
 │
-├── device_profiles/             # 设备能力档案（每设备独立 Markdown）
+├── config/                      # 配置文件
+│   ├── sim_config.yaml          #   仿真参数
+│   ├── safety_config.yaml       #   安全包线限制
+│   └── camera_spawn.sdf         #   摄像头部署定义
 │
-├── clients/                     # 多平台客户端 SDK
-│   ├── python/                  #   Python 客户端库
-│   ├── arduino/                 #   Arduino/ESP32 客户端
-│   └── ros2/                    #   ROS2 桥接节点
-│
-├── sim/                         # 仿真资源
-│   ├── models/                  #   自定义 Gazebo 模型
-│   ├── worlds/                  #   自定义 Gazebo 场景
-│   ├── airframes/               #   自定义 airframe
-│   └── sim_manager.py           #   仿真生命周期管理
-│
-├── simulator/                   # 独立仿真客户端
-│   ├── sim_client.py            #   解耦仿真设备客户端
-│   └── start_sim.sh             #   一键启动仿真
+├── scripts/                     # 自动化脚本
+│   ├── setup_px4.sh             #   一键 PX4 + Gazebo 环境搭建
+│   └── start_sim.sh             #   仿真启动器
 │
 ├── ui/                          # Web 监控界面（React）
 │   └── src/components/          #   15 个 React 组件
 │
 ├── docs/                        # 开发文档
+│   ├── SIMULATION_SETUP.md      #   PX4 + Gazebo 搭建指南
 │   ├── ARCHITECTURE.md          #   系统架构
-│   ├── FAQ.md                   #   12 个已知问题 + 解决方案
-│   └── ...                      #   搭建、适配器、技能、感知指南
+│   ├── FAQ.md                   #   已知问题 + 解决方案
+│   └── ...                      #   适配器、技能、感知指南
 │
 └── assets/                      # 图片与演示资源
 ```
@@ -404,7 +370,7 @@ AerialClaw/
 ## 研究进展与计划
 
 ### 已实现（v2.0）
-- [x] 自主决策循环 · 身份与状态管理 · 四层技能架构
+- [x] 自主决策循环 · 身份与状态管理 · 硬/软两层技能架构
 - [x] 被动 + 主动双层感知 · 经验积累与反思 · 动态技能生成
 - [x] PX4 + Gazebo 仿真集成 · Web 监控与交互界面（15 个组件）
 - [x] 脊髓安全架构 — 命令过滤 → 沙箱 → 审批 → 安全包线
@@ -433,11 +399,5 @@ AerialClaw/
 
 项目由西安电子科技大学计算机科学与技术学院 ROBOTY 实验室开发。
 
-研究思路受到 [OpenClaw](https://github.com/openclaw/openclaw) 项目的启发，在此表示感谢。
-
-基于以下开源技术构建：
+研究思路受到 [OpenClaw](https://github.com/openclaw/openclaw) 项目的启发。基于以下开源技术构建：
 [PX4](https://px4.io/) · [Gazebo](https://gazebosim.org/) · [MAVSDK](https://mavsdk.mavlink.io/) · [React](https://react.dev/) · [Vite](https://vitejs.dev/)
-
----
-
-*本项目为学术研究性质的开源项目，旨在探索LLM在自主移动平台中的应用潜力。*
