@@ -92,13 +92,13 @@ All documents use Markdown format, supporting version management and manual revi
 
 ### Integrated Skill System
 
-The system uses a **four-layer skill architecture** inspired by human cognitive structure, where each layer handles a different level of abstraction:
+The system uses a **two-layer skill architecture** — hard skills handle all atomic operations, soft skills provide strategic composition:
 
 <p align="center">
-  <img src="assets/skill_architecture.png" alt="Four-Layer Skill Architecture" width="700" />
+  <img src="assets/skill_architecture.png" alt="Skill Architecture" width="700" />
 </p>
 
-**Motor Skills (12 Atomic Actions)** — Physical control of the drone:
+**Hard Skills (16 Atomic Operations)** — All directly executable actions:
 
 | Category | Skills | Description |
 |:---|:---|:---|
@@ -106,17 +106,9 @@ The system uses a **four-layer skill architecture** inspired by human cognitive 
 | Perception | `look_around` `detect_object` `fuse_perception` | Multi-directional observation, object detection (VLM), multi-sensor semantic fusion |
 | Status Query | `get_position` `get_battery` | Current position and battery status |
 | Markers | `mark_location` `get_marks` | Mark points of interest, query marked locations |
+| Computation | `run_python` `http_request` `read_file` `write_file` | Sandboxed code execution, HTTP requests, file I/O |
 
-**Cognitive Skills (4 Meta-Skills)** — Information processing and computation:
-
-| Skill | Description | Safety |
-|:---|:---|:---|
-| `run_python` | Execute Python code in sandboxed environment | Auto-sandboxed (Docker → subprocess → restricted) |
-| `http_request` | HTTP GET/POST requests for information retrieval | Internal network blocked, timeout enforced |
-| `read_file` | Read file contents | Restricted to working directory |
-| `write_file` | Write content to file | Restricted to working directory, audit logged |
-
-Cognitive skills give the agent **information-gathering and processing capabilities** beyond physical actions — e.g., checking weather APIs before deciding flight paths, or computing optimal routes using Python.
+Hard skills include both physical drone control and information processing capabilities — e.g., checking weather APIs before deciding flight paths, or computing optimal routes using Python. All hard skills have built-in safety mechanisms: `run_python` runs in auto-degrading sandbox (Docker → subprocess → restricted), `http_request` blocks internal network with enforced timeout, file operations are restricted to working directory with audit logging.
 
 **Soft Skills (Strategy Documents)**:
 
@@ -251,32 +243,35 @@ This script automatically:
 
 ## Quick Start
 
-Start four terminals in order:
+### Option A: Without Simulation (Mock Mode)
 
-**Terminal 1 — Simulation**
+Just see the Web UI and AI features without PX4/Gazebo:
+
 ```bash
-cd ../PX4-Autopilot
-export CMAKE_POLICY_VERSION_MINIMUM=3.5
-export PX4_GZ_WORLD=urban_rescue
-make px4_sitl gz_x500
+SIM_ADAPTER=mock python server.py
+# Open http://localhost:5001
 ```
 
-**Terminal 2 — MAVSDK Server**
+### Option B: With PX4 + Gazebo Simulation
+
+**Terminal 1 — Simulation** (after running `./scripts/setup_px4.sh`)
 ```bash
-mavsdk_server -p 50051 udp://:14540
+./scripts/start_sim.sh              # default world
+# or: ./scripts/start_sim.sh urban_rescue
 ```
 
-**Terminal 3 — AerialClaw Service**
+**Terminal 2 — AerialClaw Service**
 ```bash
-cd AerialClaw
 source venv/bin/activate
 python server.py
 ```
 
-**Terminal 4 — Browser**
+**Terminal 3 — Browser**
 ```
 http://localhost:5001
 ```
+
+> For manual simulation setup or troubleshooting, see [docs/SIMULATION_SETUP.md](docs/SIMULATION_SETUP.md).
 
 In the Web UI:
 1. Click "⚡ Initialize System"
@@ -300,50 +295,28 @@ AerialClaw/
 │   ├── planner_agent.py         #   LLM task planner (memory-aware)
 │   └── chat_mode.py             #   Conversational mode
 │
-├── core/                        # Core systems (v2.0)
-│   ├── preflight.py             #   7-point startup self-check
-│   ├── doctor.py                #   Health scoring system (0-100)
-│   ├── doctor_checks/           #   Connection / sensor / AI / config checks
-│   ├── errors.py                #   10 exception classes + fix hints
-│   ├── logger.py                #   Color terminal + 7-day file rotation
-│   ├── device_manager.py        #   Universal device registry
-│   ├── device_analyzer.py       #   LLM-based capability inference
-│   ├── device_onboarding.py     #   Conversational device profiling
-│   ├── code_generator.py        #   Auto adapter code generation
-│   ├── skill_binder.py          #   Capability → skill matching
-│   ├── skill_evolver.py         #   Skill optimization engine
-│   ├── system_executor.py       #   Sandboxed code execution
-│   ├── capability_gap.py        #   Three-layer capability gap detection
-│   ├── bootstrap.py             #   System bootstrap orchestrator
-│   ├── nlu_engine.py            #   Natural language understanding
-│   ├── hybrid_planner.py        #   Edge-cloud hybrid planning
-│   ├── transport.py             #   Multi-protocol transport layer
-│   ├── failsafe.py              #   Failsafe state machine
-│   ├── body_sense/              #   Real-time hardware perception engine
-│   └── safety/                  #   Spinal safety architecture
-│       ├── command_filter.py    #     Command whitelist filter
-│       ├── sandbox.py           #     Auto-degrading sandbox (Docker→subprocess→restricted)
-│       ├── approval.py          #     Human-in-the-loop approval
-│       ├── flight_envelope.py   #     Hard-coded physical limits
-│       └── audit_log.py         #     Immutable audit trail
+├── core/                        # Core systems
+│   ├── errors.py                #   Exception classes + fix hints
+│   └── logger.py                #   Color terminal + 7-day file rotation
 │
 ├── perception/                  # Perception system
 │   ├── daemon.py                #   Passive perception daemon
+│   ├── passive_perception.py    #   Background sensor fusion
 │   ├── vlm_analyzer.py          #   Active visual analysis (cloud VLM)
 │   ├── prompts.py               #   Perception prompts
 │   └── gz_camera.py             #   Gazebo camera bridge
 │
-├── skills/                      # Four-layer skill architecture
-│   ├── motor_skills.py          #   Motor layer: takeoff, land, fly_to, hover
-│   ├── perception_skills.py     #   Perception layer: detect, observe, scan
-│   ├── cognitive_skills.py      #   Cognitive layer: http_request, run_python
-│   ├── soft_skills.py           #   Strategy layer: document-driven composition
+├── skills/                      # Two-layer skill architecture
+│   ├── motor_skills.py          #   Hard skills: flight control, perception, status
+│   ├── perception_skills.py     #   Hard skills: detect, observe, scan
+│   ├── cognitive_skills.py      #   Hard skills: run_python, http_request, file I/O
+│   ├── observe_skill.py         #   Hard skills: multi-direction observation
+│   ├── soft_skill_manager.py    #   Strategy layer: document-driven composition
 │   ├── soft_docs/               #   Soft skill strategy documents (Markdown)
-│   ├── hard_skills.py           #   Legacy hard skill interface
 │   ├── registry.py              #   Skill registry (plug-and-play)
 │   ├── skill_loader.py          #   Dynamic skill loading
 │   ├── dynamic_skill_gen.py     #   Runtime skill generation
-│   └── docs/                    #   Skill documentation (13 skills)
+│   └── docs/                    #   Skill documentation
 │
 ├── memory/                      # Four-layer memory system
 │   ├── memory_manager.py        #   Memory orchestrator
@@ -357,14 +330,14 @@ AerialClaw/
 │   └── task_log.py              #   Structured task logger
 │
 ├── adapters/                    # Hardware abstraction layer
-│   ├── base_adapter.py          #   Abstract interface (all devices)
-│   ├── protocol_adapter.py      #   Universal device protocol (REST+WS)
-│   ├── adapter_manager.py       #   Multi-device adapter manager
-│   ├── adapter_factory.py       #   Adapter auto-creation
-│   ├── px4_adapter.py           #   PX4 SITL + MAVSDK
-│   ├── airsim_adapter.py        #   AirSim remote connection
-│   ├── sim_adapter.py           #   Simulation base adapter
-│   └── mock_adapter.py          #   Mock testing adapter
+│   ├── sim_adapter.py           #   Abstract interface (all adapters)
+│   ├── adapter_manager.py       #   Adapter registry + init
+│   ├── px4_adapter.py           #   PX4 SITL via MAVSDK (Gazebo)
+│   ├── mavsdk_adapter.py        #   MAVSDK + AirSim hybrid adapter
+│   ├── airsim_adapter.py        #   AirSim SimpleFlight adapter
+│   ├── airsim_physics.py        #   AirSim with physics simulation
+│   ├── airsim_rpc.py            #   AirSim msgpack-RPC client
+│   └── mock_adapter.py          #   Mock adapter (no hardware)
 │
 ├── robot_profile/               # Identity documents
 │   ├── SOUL.md / BODY.md        #   Personality & hardware description
@@ -372,30 +345,23 @@ AerialClaw/
 │   ├── WORLD_MAP.md             #   Environment map
 │   └── body_generator.py        #   Auto BODY.md from live devices
 │
-├── device_profiles/             # Per-device capability profiles (Markdown)
+├── config/                      # Configuration files
+│   ├── sim_config.yaml          #   Simulation parameters
+│   ├── safety_config.yaml       #   Safety envelope limits
+│   └── camera_spawn.sdf         #   Camera placement definition
 │
-├── clients/                     # Multi-platform client SDKs
-│   ├── python/                  #   Python client library
-│   ├── arduino/                 #   Arduino/ESP32 client
-│   └── ros2/                    #   ROS2 bridge node
-│
-├── sim/                         # Simulation resources
-│   ├── models/                  #   Custom Gazebo models
-│   ├── worlds/                  #   Custom Gazebo worlds
-│   ├── airframes/               #   Custom airframes
-│   └── sim_manager.py           #   Simulation lifecycle manager
-│
-├── simulator/                   # Standalone simulation client
-│   ├── sim_client.py            #   Decoupled sim device client
-│   └── start_sim.sh             #   One-click simulation launcher
+├── scripts/                     # Automation scripts
+│   ├── setup_px4.sh             #   One-click PX4 + Gazebo setup
+│   └── start_sim.sh             #   Simulation launcher
 │
 ├── ui/                          # Web monitoring interface (React)
 │   └── src/components/          #   15 React components
 │
 ├── docs/                        # Developer documentation
+│   ├── SIMULATION_SETUP.md      #   PX4 + Gazebo setup guide
 │   ├── ARCHITECTURE.md          #   System architecture
-│   ├── FAQ.md                   #   12 known issues + solutions
-│   └── ...                      #   Setup, adapter, skill, perception guides
+│   ├── FAQ.md                   #   Known issues + solutions
+│   └── ...                      #   Adapter, skill, perception guides
 │
 └── assets/                      # Images and demo resources
 ```
@@ -403,7 +369,7 @@ AerialClaw/
 ## Research Progress and Plans
 
 ### Implemented (v2.0)
-- [x] Autonomous decision loop · Identity & state management · Four-layer skill architecture
+- [x] Autonomous decision loop · Identity & state management · Hard/soft two-layer skill architecture
 - [x] Passive + active dual-layer perception · Experience reflection · Dynamic skill generation
 - [x] PX4 + Gazebo simulation · Web monitoring & interaction interface (15 components)
 - [x] Spinal safety architecture — command filter → sandbox → approval → flight envelope

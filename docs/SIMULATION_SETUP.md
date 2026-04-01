@@ -119,35 +119,48 @@ make px4_sitl gz_x500
 # Terminal 1: DDS Agent
 MicroXRCEAgent udp4 -p 8888
 
-# Terminal 2: Gazebo (headless or with GUI)
+# Terminal 2: Gazebo (headless)
+export PX4_GZ_MODELS="<PX4_DIR>/Tools/simulation/gz/models"
+export PX4_GZ_WORLDS="<PX4_DIR>/Tools/simulation/gz/worlds"
 export GZ_SIM_RESOURCE_PATH="$HOME/.simulation-gazebo/models:$PX4_GZ_MODELS:$PX4_GZ_WORLDS"
-gz sim --verbose=1 -r -s worlds/default.sdf    # server only
-gz sim -g                                        # GUI (optional)
+gz sim --verbose=1 -r -s "${PX4_GZ_WORLDS}/default.sdf"    # server only
+# gz sim -g                                                  # GUI (optional, separate terminal)
 
-# Terminal 3: PX4 SITL
+# Terminal 3: PX4 SITL (STANDALONE mode — connects to already-running Gazebo)
 export PX4_SYS_AUTOSTART=4001
-export PX4_SIMULATOR=gz PX4_GZ_WORLD=default PX4_SIM_MODEL=x500 PX4_GZ_STANDALONE=1
-cd PX4-Autopilot/build/px4_sitl_default
-./bin/px4 rootfs -s etc/init.d-posix/rcS
+export PX4_SIMULATOR=gz
+export PX4_GZ_WORLD=default
+export PX4_SIM_MODEL=x500
+export PX4_GZ_STANDALONE=1
+PX4_BUILD="<PX4_DIR>/build/px4_sitl_default"
+cd "$PX4_BUILD"
+./bin/px4 "$PX4_BUILD" -s "${PX4_BUILD}/etc/init.d-posix/rcS"
 
-# Terminal 4: MAVSDK Server
-mavsdk_server -p 50051 udp://:14540
-
-# Terminal 5: AerialClaw
+# Terminal 4: AerialClaw
 cd AerialClaw
+source venv/bin/activate
 python server.py
 # Open http://localhost:5001
 ```
 
-### Using the start script
+> **Important**: Use STANDALONE mode (`PX4_GZ_STANDALONE=1`) with `bin/px4` directly.
+> The `make px4_sitl gz_x500` shortcut works for testing but hardcodes the model name,
+> making it impossible to use custom sensor models like `x500_lidar_2d_cam`.
+
+### Using the start script (recommended)
 
 ```bash
-# Set PX4_DIR if PX4 is not in the default location
-export PX4_DIR=/path/to/PX4-Autopilot
+# First time: set up PX4 environment
+./scripts/setup_px4.sh
 
-cd AerialClaw
-./scripts/start_gz_sim.sh              # default world
-./scripts/start_gz_sim.sh urban_rescue  # urban rescue scenario
+# Launch simulation (DDS Agent + Gazebo + PX4 SITL)
+./scripts/start_sim.sh              # default world
+./scripts/start_sim.sh urban_rescue  # urban rescue scenario
+
+# In another terminal:
+source venv/bin/activate
+python server.py
+# Open http://localhost:5001
 ```
 
 ## Sensor Configuration
