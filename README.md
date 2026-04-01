@@ -234,9 +234,10 @@ One-click script handles PX4 cloning, patching, custom model installation, and c
 
 This script automatically:
 - Clones PX4-Autopilot from the official repository
-- Applies AerialClaw parameter patches (magnetometer, no-RC mode, etc.)
-- Installs custom drone model (x500_sensor: 5 cameras + 3D LiDAR)
-- Installs custom Gazebo world (urban_rescue)
+- Applies macOS ARM64 build patches (CMake policy, protobuf, VLA warnings)
+- Downloads PX4 Gazebo base models from the official model repository
+- Installs AerialClaw's custom drone model (x500_lidar_2d_cam: 5 cameras + 2D LiDAR)
+- Installs custom Gazebo worlds (urban_rescue: buildings, ruins, victims, fire)
 - Builds PX4 SITL
 
 > First build takes approximately 10-30 minutes. For macOS ARM64 troubleshooting, see [docs/SIMULATION_SETUP.md](docs/SIMULATION_SETUP.md).

@@ -14,10 +14,11 @@
 #   1. Checks prerequisites (CMake, Gazebo, Python)
 #   2. Clones PX4-Autopilot (if not present)
 #   3. Applies macOS ARM64 build patches
-#   4. Downloads custom Gazebo models (x500 with sensors)
-#   5. Downloads custom Gazebo worlds (urban_rescue)
-#   6. Builds PX4 SITL
-#   7. Installs Micro XRCE-DDS Agent (if not present)
+#   4. Downloads PX4 Gazebo base models
+#   5. Installs AerialClaw custom drone model (x500_lidar_2d_cam: 5 cameras + 2D LiDAR)
+#   6. Installs AerialClaw custom Gazebo worlds (urban_rescue)
+#   7. Builds PX4 SITL
+#   8. Installs Micro XRCE-DDS Agent (if not present)
 #
 # After running this script, use scripts/start_sim.sh to launch.
 # ============================================================
@@ -106,21 +107,21 @@ if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
     ok "macOS ARM64 patches applied"
 fi
 
-# ── Step 3: Download Custom Models ─────────────────────────────
+# ── Step 3: Download PX4 Gazebo Base Models ────────────────────
 
-info "Setting up Gazebo models..."
+info "Setting up Gazebo base models..."
 mkdir -p "$MODEL_DIR"
 
-# x500 with LiDAR and cameras
-if [ -d "${MODEL_DIR}/x500_lidar_2d_cam" ]; then
-    ok "x500_lidar_2d_cam model already present"
+# Download official PX4 models (x500 base, sensors, etc.)
+if [ -d "${MODEL_DIR}/x500" ]; then
+    ok "PX4 base models already present"
 else
     info "Downloading PX4 Gazebo models..."
     MODELS_TMP=$(mktemp -d)
     git clone --depth=1 https://github.com/PX4/PX4-gazebo-models.git "$MODELS_TMP" 2>/dev/null || true
     if [ -d "${MODELS_TMP}/models" ]; then
         cp -r "${MODELS_TMP}/models/"* "$MODEL_DIR/" 2>/dev/null || true
-        ok "Gazebo models installed to $MODEL_DIR"
+        ok "PX4 Gazebo base models installed to $MODEL_DIR"
     else
         warn "Could not download PX4-gazebo-models. You may need to download manually."
         echo "  git clone https://github.com/PX4/PX4-gazebo-models.git"
@@ -129,20 +130,40 @@ else
     rm -rf "$MODELS_TMP"
 fi
 
-# ── Step 4: Install Custom Worlds ──────────────────────────────
+# ── Step 4: Install AerialClaw Custom Model ────────────────────
 
-info "Setting up Gazebo worlds..."
+info "Installing AerialClaw custom drone model (x500_lidar_2d_cam)..."
 
-# Copy urban_rescue world from PX4 if available
-PX4_WORLDS="${PX4_DIR}/Tools/simulation/gz/worlds"
-if [ -f "${PX4_WORLDS}/urban_rescue.sdf" ]; then
-    ok "urban_rescue world available in PX4"
-elif [ -d "$PX4_WORLDS" ]; then
-    # Create a basic urban_rescue world if not present
-    warn "urban_rescue.sdf not found in PX4 worlds. Using default world."
+# Overwrite with AerialClaw's customized version:
+#   - 5 cameras (front/rear/left/right/down) at 640x480, 80° FOV
+#   - 2D LiDAR on top
+#   - Optimized mount positions for search & rescue
+CUSTOM_MODEL_SRC="${PROJECT_DIR}/sim/models/x500_lidar_2d_cam"
+if [ -d "$CUSTOM_MODEL_SRC" ]; then
+    cp -r "$CUSTOM_MODEL_SRC" "$MODEL_DIR/"
+    ok "AerialClaw x500_lidar_2d_cam installed (5 cameras + 2D LiDAR)"
+else
+    warn "Custom model not found at $CUSTOM_MODEL_SRC"
 fi
 
-# ── Step 5: Build PX4 SITL ─────────────────────────────────────
+# ── Step 5: Install Custom Gazebo Worlds ───────────────────────
+
+info "Installing AerialClaw custom Gazebo worlds..."
+
+PX4_WORLDS="${PX4_DIR}/Tools/simulation/gz/worlds"
+CUSTOM_WORLDS_SRC="${PROJECT_DIR}/sim/worlds"
+
+if [ -d "$CUSTOM_WORLDS_SRC" ] && [ -d "$PX4_WORLDS" ]; then
+    cp "${CUSTOM_WORLDS_SRC}/"*.sdf "$PX4_WORLDS/" 2>/dev/null || true
+    ok "Custom worlds installed to $PX4_WORLDS"
+    ls "$CUSTOM_WORLDS_SRC/"*.sdf 2>/dev/null | while read f; do
+        echo "  - $(basename "$f")"
+    done
+else
+    warn "Custom worlds not found or PX4 worlds dir missing."
+fi
+
+# ── Step 6: Build PX4 SITL ─────────────────────────────────────
 
 info "Building PX4 SITL (this may take 10-30 minutes on first build)..."
 cd "$PX4_DIR"
@@ -174,7 +195,7 @@ pkill -f "gz sim" 2>/dev/null || true
 pkill -f "bin/px4" 2>/dev/null || true
 sleep 2
 
-# ── Step 6: Micro XRCE-DDS Agent ───────────────────────────────
+# ── Step 7: Micro XRCE-DDS Agent ───────────────────────────────
 
 if command -v MicroXRCEAgent &>/dev/null; then
     ok "MicroXRCEAgent already installed"
@@ -198,7 +219,7 @@ else
     fi
 fi
 
-# ── Step 7: Python dependencies ────────────────────────────────
+# ── Step 8: Python dependencies ────────────────────────────────
 
 info "Checking Python mavsdk package..."
 if python3 -c "import mavsdk" 2>/dev/null; then

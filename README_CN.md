@@ -235,9 +235,10 @@ LLM_MODEL=gpt-4o                          # 模型名称
 
 该脚本会自动：
 - 克隆 PX4-Autopilot 官方仓库
-- 应用 AerialClaw 的参数补丁（磁力计、免遥控器模式等）
-- 安装自定义无人机模型（x500_sensor：5 路摄像头 + 3D LiDAR）
-- 安装自定义 Gazebo 场景（urban_rescue）
+- 应用 macOS ARM64 编译补丁（CMake 策略、protobuf、VLA 警告）
+- 从官方模型仓库下载 PX4 Gazebo 基础模型
+- 安装 AerialClaw 自定义无人机模型（x500_lidar_2d_cam：5 路摄像头 + 2D LiDAR）
+- 安装自定义 Gazebo 场景（urban_rescue：建筑、废墟、受害者、火灾）
 - 编译 PX4 SITL
 
 > 首次编译约需 10-30 分钟。macOS ARM64 用户如遇问题，参见 [docs/SIMULATION_SETUP.md](docs/SIMULATION_SETUP.md)。
