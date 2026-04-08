@@ -40,12 +40,21 @@ class GzSensorBridge:
         """初始化 Gazebo Transport；若相机节点不可用则返回 False。"""
         try:
             timeout_ms = int(os.environ.get("GZ_CAMERA_TIMEOUT_MS", "8000"))
-            self._camera = GzCamera(
-                world=self._world,
-                model=self._model,
-                timeout_ms=timeout_ms,
-                persistent=True,
-            )
+            try:
+                # 新版 GzCamera 支持 persistent；老版本参数不兼容时自动回退
+                self._camera = GzCamera(
+                    world=self._world,
+                    model=self._model,
+                    timeout_ms=timeout_ms,
+                    persistent=True,
+                )
+            except TypeError:
+                logger.warning("GzCamera 不支持 persistent 参数，回退到兼容模式")
+                self._camera = GzCamera(
+                    world=self._world,
+                    model=self._model,
+                    timeout_ms=timeout_ms,
+                )
             self._camera._ensure_node()
         except Exception as e:
             logger.error("GzSensorBridge: 相机无法启动: %s", e, exc_info=True)

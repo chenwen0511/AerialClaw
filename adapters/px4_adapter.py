@@ -13,6 +13,10 @@ from adapters.sim_adapter import (
 
 logger = logging.getLogger(__name__)
 _MIN_ALT, _MAX_ALT, _ARRIVE_DIST = 2.0, 200.0, 2.5
+# 高度变化：容差过严 + 固定 60s 在高海拔/噪声下易超时；可用环境变量覆盖
+_ALT_TOL = float(os.getenv("PX4_ALT_CHANGE_TOL", "2.0"))
+_ALT_TIMEOUT_BASE = float(os.getenv("PX4_ALT_CHANGE_TIMEOUT_BASE", "90.0"))
+_ALT_PER_METER_S = float(os.getenv("PX4_ALT_CHANGE_TIMEOUT_PER_M", "8.0"))
 
 
 class PX4Adapter(SimAdapter):
@@ -248,22 +252,32 @@ class PX4Adapter(SimAdapter):
             self._stop_req = False
             self.is_flying = True
             self._ra(self._enter_offboard())
+            # 垂直速度上限随 speed 缩放（技能默认传 8.0），略提高比例以更快收敛
+            vmax = float(min(max(abs(speed) * 0.45, 1.5), 5.0))
+            gain = 0.65
+            timeout = max(_ALT_TIMEOUT_BASE, _ALT_PER_METER_S * abs(delta) + 30.0)
             start = time.time()
             try:
-                while time.time() - start < 60.:
+                while time.time() - start < timeout:
                     if self._stop_req:
                         self._ra(self._vel_cmd(0,0,0,self._hdg))
                         return ActionResult(False, "Stopped")
                     err = abs(self._abs_pos.down - tgt_d)
-                    if err < 1.0:
+                    if err < _ALT_TOL:
                         self._ra(self._vel_cmd(0,0,0,self._hdg))
                         fa = -(self._abs_pos.down - self._sp_d)
                         return ActionResult(True, f"Altitude: {fa:.1f}m")
                     dd = tgt_d - self._abs_pos.down
-                    self._ra(self._vel_cmd(0, 0, max(min(dd*0.5,3.),-3.), self._hdg))
+                    vd = max(min(dd * gain, vmax), -vmax)
+                    self._ra(self._vel_cmd(0, 0, vd, self._hdg))
                     time.sleep(0.1)
                 self._ra(self._vel_cmd(0,0,0,self._hdg))
-                return ActionResult(False, "Altitude change timeout")
+                fa = -(self._abs_pos.down - self._sp_d)
+                err_final = abs(self._abs_pos.down - tgt_d)
+                return ActionResult(
+                    False,
+                    f"Altitude change timeout (err={err_final:.1f}m after {timeout:.0f}s, tol={_ALT_TOL}m, alt≈{fa:.1f}m)",
+                )
             finally:
                 self.is_flying = False
         except Exception as e:

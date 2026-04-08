@@ -281,7 +281,21 @@ def _try_connect_adapter():
                 ok = init_adapter("mock", timeout=5)
             else:
                 state.push_log("info", "Connecting to PX4 adapter (MAVSDK)...")
-                ok = init_adapter("px4", connection_str="udp://:14540", timeout=10)
+                # PX4 SITL 首次启动常有延迟，做多次重试，避免过早降级到 mock
+                ok = False
+                last_err = ""
+                for i in range(3):
+                    try:
+                        ok = init_adapter("px4", connection_str="udp://:14540", timeout=20)
+                    except Exception as e:
+                        last_err = str(e)
+                        ok = False
+                    if ok:
+                        break
+                    state.push_log("warn", f"PX4 连接未就绪，重试 {i+1}/3 ...")
+                    time.sleep(4)
+                if not ok and last_err:
+                    state.push_log("warn", f"PX4 连接失败: {last_err}")
 
             adapter = get_adapter()
             if ok:
@@ -290,9 +304,12 @@ def _try_connect_adapter():
                 state.push_log("warn", f"Adapter degraded to: {adapter.name}")
             _start_telemetry_sync()
 
-            # PX4 + Gazebo：订阅 gz-transport 相机/雷达（与 venv 无关，需系统 Python + gz 绑定）
+            # PX4 + Gazebo：仅在 PX4 适配器连接成功后再启动桥接，避免降级 mock 时误报桥接失败
             if sim_adapter == "px4":
-                _start_sensor_bridge()
+                if ok and adapter and getattr(adapter, "name", "") == "px4":
+                    _start_sensor_bridge()
+                else:
+                    state.push_log("warn", "PX4 未连接成功，跳过传感器桥接启动")
 
             # AirSim 模式下启动摄像头流推送
             if sim_adapter in ("airsim", "airsim_physics") and ok:
