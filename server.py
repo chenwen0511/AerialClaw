@@ -290,6 +290,10 @@ def _try_connect_adapter():
                 state.push_log("warn", f"Adapter degraded to: {adapter.name}")
             _start_telemetry_sync()
 
+            # PX4 + Gazebo：订阅 gz-transport 相机/雷达（与 venv 无关，需系统 Python + gz 绑定）
+            if sim_adapter == "px4":
+                _start_sensor_bridge()
+
             # AirSim 模式下启动摄像头流推送
             if sim_adapter in ("airsim", "airsim_physics") and ok:
                 _start_airsim_camera_stream()
@@ -609,8 +613,8 @@ def _start_sensor_bridge():
             from sim.gz_sensor_bridge import GzSensorBridge
             from skills.perception_skills import set_sensor_bridge
 
-            # 从 start.py 传入的环境变量读取 world 名
-            world = os.environ.get("PX4_GZ_WORLD", "urban_rescue")
+            # 与 scripts/start_sim.sh、run_server_px4.sh 一致（默认 default）
+            world = os.environ.get("PX4_GZ_WORLD", "default")
             model = os.environ.get("PX4_SIM_MODEL", "x500_lidar_2d_cam") + "_0"
             bridge = GzSensorBridge(model_name=model, world_name=world)
 

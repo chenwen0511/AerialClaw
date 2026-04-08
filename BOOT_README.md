@@ -34,7 +34,7 @@ cd /path/to/AerialClaw
 ```bash
 cd /path/to/AerialClaw
 export GZ_PARTITION=aerialclaw
-./scripts/start_sim.sh default x500_lidar_2d_cam
+./scripts/start_sim.sh urban_rescue x500_lidar_2d_cam
 ```
 
 - 第一个参数：`world`（如 `default`、`urban_rescue`）
@@ -106,7 +106,7 @@ gz topic -l | grep '/model/' | head -20
 curl -s http://127.0.0.1:5001/api/sensor/status | python3 -m json.tool
 ```
 
-- `"running": false` 且 `"传感器桥接未启动"`：多为 **用了 Conda Python**，或 **未点初始化 / 仿真未起**。
+- `"running": false` 且 `"传感器桥接未启动"`：多为 **未用系统 Python 跑 server**（Conda/venv 无 `gz.transport`）、**仿真未起 / `GZ_PARTITION` 不一致**、或 **桥接线程尚未跑完约 15s 延迟**（PX4 模式在 MAVSDK 连接后会自动拉桥接）。
 - 确认服务进程：
 
 ```bash
@@ -122,6 +122,8 @@ curl -I http://127.0.0.1:5001/api/sensor/camera
 ```
 
 **200** 且 `Content-Type: image/jpeg` 为正常；**503** 表示桥接无帧或适配器无图。
+
+若日志出现 **`超时未收到图像: .../cam_right/...`**：多为 **该 topic 尚未发布**（仿真刚起、无头/无渲染未出图、`GZ_PARTITION` 与仿真不一致）或 **首帧较慢**。桥接已用 **持久订阅 + 缓存** 降低丢帧；仍缺图时可加大首帧等待：`export GZ_CAMERA_TIMEOUT_MS=15000` 后重启 server。请在仿真运行时执行 `gz topic -l | grep cam_right` 确认该路径存在。
 
 ### 5. 系统 Python 能否加载 Gazebo 绑定？
 
@@ -139,6 +141,16 @@ sudo apt install python3-gz-transport13 python3-gz-msgs10
 
 - 应用：`logs/YYYY-MM-DD.log`
 - 仿真：`/tmp/aerialclaw_*.log`
+
+### 7. `takeoff` / `arm` 报 `COMMAND_DENIED`（Command Denied）
+
+多为 **PX4 预解锁检查未通过**（EKF/GPS/home 未就绪、或 SITL 要求 GPS 才能解锁）。
+
+- **先等**：仿真与 MAVSDK 连接后 **再等 10～30 秒** 再点起飞；适配器会 **等待 `health.is_armable`** 并多次重试 `arm()`。
+- **一键放宽（仅 SITL）**：启动 server 前执行  
+  `export PX4_SITL_RELAX_ARM=1`  
+  会在起飞/解锁前尝试设置 `COM_ARM_WO_GPS=1`（允许无 GPS 解锁）。
+- **手动**：在 PX4 shell / QGC 参数中：`param set COM_ARM_WO_GPS 1`，必要时查看 `listener vehicle_status` / 预解锁失败原因。
 
 ---
 
