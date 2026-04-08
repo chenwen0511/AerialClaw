@@ -263,10 +263,24 @@ SIM_ADAPTER=mock python server.py
 ```
 
 **终端 2 — AerialClaw 主服务**
+
+在 **Ubuntu + apt 安装的 Gazebo（Harmonic 等）** 下，相机/LiDAR 桥接依赖 `gz.transport` 等 **与系统 Python 绑定的扩展**（随 `python3-gz-transport13` 等包安装）。它们是针对 **`/usr/bin/python3`** 编译的；若在 **venv / Conda** 里用 **另一主版本**（例如 3.13）跑 `server.py`，常见现象是 **无法 `import gz.transport`**，传感器桥接起不来，Web UI 里相机会 **NO SIGNAL**。因此 **方式 B 不要沿用方式 A 的 venv 来跑主服务**，请任选其一：
+
 ```bash
-source venv/bin/activate
-python server.py
+# 推荐：脚本固定系统 Python，并默认对齐 GZ_PARTITION / 机型等环境变量
+./scripts/run_server_px4.sh
 ```
+
+或直接：
+
+```bash
+/usr/bin/python3 -m pip install --user -r requirements.txt   # 首次：Flask 等装到用户目录即可
+/usr/bin/python3 server.py
+```
+
+**Mock 模式（方式 A）** 不加载 Gazebo 桥接，继续用 venv + `SIM_ADAPTER=mock python server.py` 没问题。
+
+更完整的定位与启动顺序见 [BOOT_README.md](BOOT_README.md)。
 
 **终端 3 — 浏览器访问**
 ```
